@@ -112,11 +112,20 @@ const signer = (): Signer & { calls: string[] } => {
   };
 };
 
-const run = (args: { allowance: bigint; fresh?: Quote; status?: Order }) => {
+const run = (args: {
+  allowance: bigint;
+  fresh?: Quote;
+  skipPreflight?: boolean;
+  status?: Order;
+}) => {
   const wallet = signer();
   const approvals: string[] = [];
+  let allowanceReads = 0;
   const promise = executeSwap({
-    allowance: async () => args.allowance,
+    allowance: async () => {
+      allowanceReads += 1;
+      return args.allowance;
+    },
     approve: async () => {
       approvals.push("approve");
     },
@@ -131,11 +140,12 @@ const run = (args: { allowance: bigint; fresh?: Quote; status?: Order }) => {
     recipient: OWNER,
     requiredAllowance: BigInt(RAW_IN),
     signer: wallet,
+    skipPreflight: args.skipPreflight,
     slippageBps: 100,
     tokenIn: WETH,
     tokenOut: USDC,
   });
-  return { approvals, promise, wallet };
+  return { allowanceReads, approvals, promise, wallet };
 };
 
 describe("executeSwap", () => {
@@ -146,6 +156,18 @@ describe("executeSwap", () => {
     expect(wallet.calls).toEqual(["sign"]);
     expect(filled.status).toBe("filled");
     expect(filled.txHash).toBe(`0x${"cd".repeat(32)}`);
+  });
+
+  test("submits without reading allowance when preflight is skipped", async () => {
+    const { allowanceReads, approvals, promise, wallet } = run({
+      allowance: 0n,
+      skipPreflight: true,
+    });
+    const filled = await promise;
+    expect(allowanceReads).toBe(0);
+    expect(approvals).toEqual([]);
+    expect(wallet.calls).toEqual(["sign"]);
+    expect(filled.status).toBe("filled");
   });
 
   test("approves Permit2 when the allowance is short", async () => {

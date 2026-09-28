@@ -16,9 +16,9 @@ export const NATIVE_TOKEN_ADDRESS =
 export const INDICATIVE_OWNER =
   "0x0000000000000000000000000000000000000001" as const;
 export const DEFAULT_API_URL = "https://app.baibai.cx/v1/trpc";
-export const RPC_URL = "https://mainnet.base.org";
+export const DEFAULT_RPC_URL = "https://mainnet.base.org";
 export const DEFAULT_SLIPPAGE_BPS = 100;
-export const ORDER_POLL_INTERVAL_MS = 2_000;
+export const ORDER_POLL_INTERVAL_MS = 200;
 export const ORDER_POLL_TIMEOUT_MS = 2 * 60 * 1000;
 
 export const asAddress = (value: string) => value as `0x${string}`;
@@ -29,6 +29,14 @@ export const resolveApiUrl = (flag: string | undefined) => {
   const url = flag ?? process.env.BAIBAI_API_URL ?? DEFAULT_API_URL;
   if (url.trim().length === 0) {
     throw new Error("API URL is empty.");
+  }
+  return url;
+};
+
+export const resolveRpcUrl = (flag: string | undefined) => {
+  const url = flag ?? process.env.RPC_URL ?? DEFAULT_RPC_URL;
+  if (url.trim().length === 0) {
+    throw new Error("RPC URL is empty.");
   }
   return url;
 };

@@ -1,3 +1,4 @@
+import { BASE_CHAIN_ID } from "./config";
 import type { Order, Portfolio, Quote, QuoteRequest, TokenInfo } from "./types";
 
 export type Api = {
@@ -46,7 +47,10 @@ export const createApi = (url: string): Api => ({
   },
   tokens: {
     get: { query: (input) => call(url, "tokens.get", "query", input) },
-    list: { query: () => call(url, "tokens.list", "query") },
+    list: {
+      query: () =>
+        call(url, "tokens.list", "query", { chainId: BASE_CHAIN_ID }),
+    },
   },
   wallet: {
     portfolio: {

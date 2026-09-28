@@ -8,6 +8,14 @@ export const formatRawAmount = (raw: string, decimals: number) => {
   return trimmed.length === 0 ? (whole ?? "0") : `${whole}.${trimmed}`;
 };
 
+export const formatDuration = (ms: number) => {
+  const rounded = Math.max(0, Math.round(ms));
+  if (rounded < 1_000) return `${rounded}ms`;
+  const seconds = rounded / 1_000;
+  if (seconds < 10) return `${seconds.toFixed(1).replace(/\.0$/, "")}s`;
+  return `${Math.round(seconds)}s`;
+};
+
 export const formatPercentFromBps = (slippageBps: number) => {
   const percent = slippageBps / 100;
   return `${percent}%`;

@@ -39,7 +39,7 @@ baibai wallet disconnect
 baibai swap 10 usdc weth
 ```
 
-The command prints the quote and asks you to confirm. Enter accepts. `--yes` skips the prompt. It approves Permit2 if needed, signs the Permit2 witness, submits the order, and waits until the order is filled, failed, or expired. `eth` is wrapped or unwrapped around the swap, the same way the app does it.
+The command prints the quote and asks you to confirm. Enter accepts. `--yes` skips the prompt. It approves Permit2 if needed, signs the Permit2 witness, submits the order, and waits until the order is filled, failed, or expired. `eth` is wrapped or unwrapped around the swap, the same way the app does it. `--fast` skips the balance and Permit2 allowance `eth_call`s and submits immediately. Permit2 must already be approved, and an insufficient balance fails when the order is filled.
 
 ```bash
 baibai orders
@@ -47,7 +47,7 @@ baibai order <orderId>
 baibai balance
 ```
 
-`--json` prints one JSON object. `--api` overrides the API URL. The default is `https://app.baibai.cx/v1/trpc`. `BAIBAI_API_URL` is the same override.
+`--json` prints one JSON object. `--api` overrides the API URL. The default is `https://app.baibai.cx/v1/trpc`. `BAIBAI_API_URL` is the same override. `--rpc` overrides the Base RPC URL used to read balances, send approvals, and wrap or unwrap ETH. The default is `https://mainnet.base.org`. `RPC_URL` is the same override.
 
 ## Develop
 

@@ -1,7 +1,7 @@
 import { createApi } from "../api";
-import { HelpRequested, parseTradeArgs } from "../args";
+import { HelpRequested, parseTradeArgs, type TradeArgs } from "../args";
 import { asAddress, defaultHome, WRAPPED_NATIVE_ADDRESS } from "../config";
-import { formatRawAmount, writeOut } from "../format";
+import { formatDuration, formatRawAmount, writeOut } from "../format";
 import { promptConfirm } from "../prompt";
 import { requireSigner } from "../signers/open";
 import { parseHumanAmount } from "../swap/amounts";
@@ -32,7 +32,7 @@ export const swapCommand = async (argv: string[]) => {
     throw error;
   }
 
-  const signer = await requireSigner(defaultHome());
+  const signer = await requireSigner(defaultHome(), trade.rpcUrl);
   try {
     const api = createApi(trade.apiUrl);
     const listed = await api.tokens.list.query();
@@ -55,10 +55,10 @@ export const swapCommand = async (argv: string[]) => {
     const recipient = trade.recipient ?? signer.address;
 
     if (plan === "wrap" || plan === "unwrap") {
-      await ensureBalance(tokenIn, signer.address, amount);
+      await requireBalance(trade, tokenIn, signer.address, amount);
       if (!(await accept(trade.yes))) return;
-      if (plan === "wrap") await depositNative(signer, amount);
-      else await withdrawNative(signer, amount);
+      if (plan === "wrap") await depositNative(signer, amount, trade.rpcUrl);
+      else await withdrawNative(signer, amount, trade.rpcUrl);
       writeOut(
         trade.json,
         { amount: trade.amount, plan, symbol: tokenIn.symbol },
@@ -70,7 +70,7 @@ export const swapCommand = async (argv: string[]) => {
     const sell = plan === "wrap-then-swap" ? wrappedToken(listed) : tokenIn;
     const buy = plan === "swap-then-unwrap" ? wrappedToken(listed) : tokenOut;
     if (plan !== "wrap-then-swap" && !trade.exactOut) {
-      await ensureBalance(sell, signer.address, amount);
+      await requireBalance(trade, sell, signer.address, amount);
     }
 
     const displayed = await requestQuote({
@@ -106,17 +106,22 @@ export const swapCommand = async (argv: string[]) => {
 
     const inputAmount = trade.exactOut ? BigInt(displayed.maxAmountIn) : amount;
     if (plan === "wrap-then-swap" || trade.exactOut) {
-      await ensureBalance(
+      await requireBalance(
+        trade,
         plan === "wrap-then-swap" ? tokenIn : sell,
         signer.address,
         inputAmount,
       );
     }
-    if (plan === "wrap-then-swap") await depositNative(signer, inputAmount);
+    if (plan === "wrap-then-swap")
+      await depositNative(signer, inputAmount, trade.rpcUrl);
 
+    const startedAt = Date.now();
     const order = await executeSwap({
-      allowance: () => readAllowance(asAddress(sell.address), signer.address),
-      approve: () => approvePermit2(signer, asAddress(sell.address)),
+      allowance: () =>
+        readAllowance(asAddress(sell.address), signer.address, trade.rpcUrl),
+      approve: () =>
+        approvePermit2(signer, asAddress(sell.address), trade.rpcUrl),
       authorizedAmountIn: inputAmount,
       createOrder: (input) => api.order.create.mutate(input),
       intent: trade.exactOut ? "exactOut" : "exactIn",
@@ -129,6 +134,7 @@ export const swapCommand = async (argv: string[]) => {
       recipient,
       requiredAllowance: inputAmount,
       signer,
+      skipPreflight: trade.fast,
       slippageBps: trade.slippageBps,
       tokenIn: asAddress(sell.address),
       tokenOut: asAddress(buy.address),
@@ -138,11 +144,16 @@ export const swapCommand = async (argv: string[]) => {
       if (!order.amountOutDelivered) {
         throw new Error("The fill did not report an output amount to unwrap.");
       }
-      await withdrawNative(signer, BigInt(order.amountOutDelivered));
+      await withdrawNative(
+        signer,
+        BigInt(order.amountOutDelivered),
+        trade.rpcUrl,
+      );
     }
 
     const outputToken = plan === "swap-then-unwrap" ? tokenOut : buy;
     const inputToken = plan === "wrap-then-swap" ? tokenIn : sell;
+    const filledInMs = Date.now() - startedAt;
     const result = {
       amountIn: order.amountInSpent
         ? formatRawAmount(order.amountInSpent, inputToken.decimals)
@@ -150,6 +161,7 @@ export const swapCommand = async (argv: string[]) => {
       amountOut: order.amountOutDelivered
         ? formatRawAmount(order.amountOutDelivered, outputToken.decimals)
         : undefined,
+      filledInMs,
       orderId: order.orderId,
       status: order.status,
       tokenIn: inputToken.symbol,
@@ -160,7 +172,7 @@ export const swapCommand = async (argv: string[]) => {
       trade.json,
       result,
       [
-        "filled",
+        `filled in ${formatDuration(filledInMs)}`,
         `in      ${result.amountIn ?? "?"} ${result.tokenIn}`,
         `out     ${result.amountOut ?? "?"} ${result.tokenOut}`,
         `tx      ${result.txHash ?? ""}`,
@@ -180,12 +192,23 @@ const wrappedToken = (tokens: TokenInfo[]) => {
   return token;
 };
 
-const ensureBalance = async (
+const requireBalance = async (
+  trade: TradeArgs,
   token: TokenInfo,
   owner: `0x${string}`,
   amount: bigint,
 ) => {
-  const balance = await readBalance(asAddress(token.address), owner);
+  if (trade.fast) return;
+  await ensureBalance(token, owner, amount, trade.rpcUrl);
+};
+
+const ensureBalance = async (
+  token: TokenInfo,
+  owner: `0x${string}`,
+  amount: bigint,
+  rpcUrl: string,
+) => {
+  const balance = await readBalance(asAddress(token.address), owner, rpcUrl);
   if (balance < amount) {
     throw new Error(
       `Insufficient ${token.symbol} balance. Have ${formatRawAmount(balance.toString(), token.decimals)}.`,

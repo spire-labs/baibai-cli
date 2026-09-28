@@ -1,5 +1,5 @@
 import { parseArgs } from "node:util";
-import { parseSlippageBps, resolveApiUrl } from "./config";
+import { parseSlippageBps, resolveApiUrl, resolveRpcUrl } from "./config";
 import { isAddress } from "./tokens";
 
 export class HelpRequested extends Error {
@@ -13,8 +13,10 @@ export type TradeArgs = {
   amount: string;
   apiUrl: string;
   exactOut: boolean;
+  fast: boolean;
   json: boolean;
   recipient?: `0x${string}`;
+  rpcUrl: string;
   slippageBps: number;
   tokenIn: string;
   tokenOut: string;
@@ -28,9 +30,11 @@ export const parseTradeArgs = (argv: string[], usage: string): TradeArgs => {
     options: {
       api: { type: "string" },
       "exact-out": { type: "boolean", default: false },
+      fast: { type: "boolean", default: false },
       help: { type: "boolean", short: "h", default: false },
       json: { type: "boolean", default: false },
       recipient: { type: "string" },
+      rpc: { type: "string" },
       slippage: { type: "string" },
       yes: { type: "boolean", default: false },
     },
@@ -48,8 +52,10 @@ export const parseTradeArgs = (argv: string[], usage: string): TradeArgs => {
     amount,
     apiUrl: resolveApiUrl(parsed.values.api),
     exactOut: parsed.values["exact-out"] ?? false,
+    fast: parsed.values.fast ?? false,
     json: parsed.values.json ?? false,
     recipient,
+    rpcUrl: resolveRpcUrl(parsed.values.rpc),
     slippageBps: parseSlippageBps(parsed.values.slippage),
     tokenIn,
     tokenOut,

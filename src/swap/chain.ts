@@ -10,7 +10,6 @@ import {
   asAddress,
   NATIVE_TOKEN_ADDRESS,
   PERMIT2_ADDRESS,
-  RPC_URL,
   WRAPPED_NATIVE_ADDRESS,
 } from "../config";
 import type { Signer } from "../signer";
@@ -35,15 +34,16 @@ const wethAbi = [
 const same = (left: string, right: string) =>
   left.toLowerCase() === right.toLowerCase();
 
-export const settlementClient = () =>
-  createPublicClient({ chain: base, transport: http(RPC_URL) });
+export const settlementClient = (rpcUrl: string) =>
+  createPublicClient({ chain: base, transport: http(rpcUrl) });
 
 export const readAllowance = async (
   token: `0x${string}`,
   owner: `0x${string}`,
+  rpcUrl: string,
 ) => {
   if (same(token, NATIVE_TOKEN_ADDRESS)) return maxUint256;
-  return settlementClient().readContract({
+  return settlementClient(rpcUrl).readContract({
     abi: erc20Abi,
     address: token,
     args: [owner, asAddress(PERMIT2_ADDRESS)],
@@ -54,8 +54,9 @@ export const readAllowance = async (
 export const readBalance = async (
   token: `0x${string}`,
   owner: `0x${string}`,
+  rpcUrl: string,
 ) => {
-  const client = settlementClient();
+  const client = settlementClient(rpcUrl);
   if (same(token, NATIVE_TOKEN_ADDRESS)) {
     return client.getBalance({ address: owner });
   }
@@ -67,11 +68,15 @@ export const readBalance = async (
   });
 };
 
-export const waitForReceipt = async (hash: `0x${string}`) => {
-  await settlementClient().waitForTransactionReceipt({ hash });
+export const waitForReceipt = async (hash: `0x${string}`, rpcUrl: string) => {
+  await settlementClient(rpcUrl).waitForTransactionReceipt({ hash });
 };
 
-export const approvePermit2 = async (signer: Signer, token: `0x${string}`) => {
+export const approvePermit2 = async (
+  signer: Signer,
+  token: `0x${string}`,
+  rpcUrl: string,
+) => {
   const hash = await signer.sendTransaction({
     data: encodeFunctionData({
       abi: erc20Abi,
@@ -80,19 +85,27 @@ export const approvePermit2 = async (signer: Signer, token: `0x${string}`) => {
     }),
     to: token,
   });
-  await waitForReceipt(hash);
+  await waitForReceipt(hash, rpcUrl);
 };
 
-export const depositNative = async (signer: Signer, amount: bigint) => {
+export const depositNative = async (
+  signer: Signer,
+  amount: bigint,
+  rpcUrl: string,
+) => {
   const hash = await signer.sendTransaction({
     data: encodeFunctionData({ abi: wethAbi, functionName: "deposit" }),
     to: asAddress(WRAPPED_NATIVE_ADDRESS),
     value: amount,
   });
-  await waitForReceipt(hash);
+  await waitForReceipt(hash, rpcUrl);
 };
 
-export const withdrawNative = async (signer: Signer, amount: bigint) => {
+export const withdrawNative = async (
+  signer: Signer,
+  amount: bigint,
+  rpcUrl: string,
+) => {
   const hash = await signer.sendTransaction({
     data: encodeFunctionData({
       abi: wethAbi,
@@ -101,5 +114,5 @@ export const withdrawNative = async (signer: Signer, amount: bigint) => {
     }),
     to: asAddress(WRAPPED_NATIVE_ADDRESS),
   });
-  await waitForReceipt(hash);
+  await waitForReceipt(hash, rpcUrl);
 };

@@ -1,7 +1,6 @@
 import { createWalletClient, http } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
 import { base } from "viem/chains";
-import { RPC_URL } from "../config";
 import { readPermit2Signature } from "../permit";
 import type { Signer } from "../signer";
 import type { PermitTypedData } from "../types";
@@ -16,12 +15,15 @@ const typedDataForViem = (typedData: PermitTypedData) => {
   };
 };
 
-export const localKeySigner = (privateKey: `0x${string}`): Signer => {
+export const localKeySigner = (
+  privateKey: `0x${string}`,
+  rpcUrl: string,
+): Signer => {
   const account = privateKeyToAccount(privateKey);
   const wallet = createWalletClient({
     account,
     chain: base,
-    transport: http(RPC_URL),
+    transport: http(rpcUrl),
   });
   return {
     address: account.address,

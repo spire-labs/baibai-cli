@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { parseTradeArgs } from "./args";
-import { parseSlippageBps } from "./config";
-import { formatRawAmount } from "./format";
+import { DEFAULT_RPC_URL, parseSlippageBps, resolveRpcUrl } from "./config";
+import { formatDuration, formatRawAmount } from "./format";
 import { accepted } from "./prompt";
 import { parseHumanAmount } from "./swap/amounts";
 import { nativePlan } from "./swap/native";
@@ -65,6 +65,53 @@ describe("parseTradeArgs", () => {
       true,
     );
   });
+
+  test("parses --fast", () => {
+    expect(parseTradeArgs(["10", "usdc", "weth"], "usage").fast).toBe(false);
+    expect(parseTradeArgs(["10", "usdc", "weth", "--fast"], "usage").fast).toBe(
+      true,
+    );
+  });
+
+  test("defaults the rpc url and accepts --rpc", () => {
+    const previous = process.env.RPC_URL;
+    delete process.env.RPC_URL;
+    try {
+      expect(parseTradeArgs(["10", "usdc", "weth"], "usage").rpcUrl).toBe(
+        DEFAULT_RPC_URL,
+      );
+      expect(
+        parseTradeArgs(
+          ["10", "usdc", "weth", "--rpc", "https://base.example"],
+          "usage",
+        ).rpcUrl,
+      ).toBe("https://base.example");
+    } finally {
+      if (previous === undefined) delete process.env.RPC_URL;
+      else process.env.RPC_URL = previous;
+    }
+  });
+});
+
+describe("resolveRpcUrl", () => {
+  test("prefers the flag, then the environment, then the default", () => {
+    const previous = process.env.RPC_URL;
+    process.env.RPC_URL = "https://env.example";
+    try {
+      expect(resolveRpcUrl("https://flag.example")).toBe(
+        "https://flag.example",
+      );
+      expect(resolveRpcUrl(undefined)).toBe("https://env.example");
+    } finally {
+      if (previous === undefined) delete process.env.RPC_URL;
+      else process.env.RPC_URL = previous;
+    }
+    expect(resolveRpcUrl(undefined)).toBe(DEFAULT_RPC_URL);
+  });
+
+  test("rejects an empty rpc url", () => {
+    expect(() => resolveRpcUrl("  ")).toThrow("RPC URL is empty.");
+  });
 });
 
 describe("accepted", () => {
@@ -94,6 +141,13 @@ describe("amounts", () => {
   test("formats raw amounts without trailing zeros", () => {
     expect(formatRawAmount("10000000", 6)).toBe("10");
     expect(formatRawAmount("1500000", 6)).toBe("1.5");
+  });
+
+  test("formats fill time in milliseconds or seconds", () => {
+    expect(formatDuration(130)).toBe("130ms");
+    expect(formatDuration(1500)).toBe("1.5s");
+    expect(formatDuration(2000)).toBe("2s");
+    expect(formatDuration(12_400)).toBe("12s");
   });
 });
 

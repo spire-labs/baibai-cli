@@ -21,8 +21,10 @@ Flags
   --exact-out            the amount is the desired output
   --recipient <address>
   --yes                  accept the swap without prompting
+  --fast                 skip the balance and allowance eth_calls
   --json
   --api <url>            default https://app.baibai.cx/v1/trpc
+  --rpc <url>            default https://mainnet.base.org
 `;
 
 const main = async () => {

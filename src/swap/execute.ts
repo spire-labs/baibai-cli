@@ -21,13 +21,17 @@ export const executeSwap = async (args: {
   recipient: `0x${string}`;
   requiredAllowance: bigint;
   signer: Signer;
+  skipPreflight?: boolean;
   sleep?: (ms: number) => Promise<void>;
   slippageBps: number;
   timeoutMs?: number;
   tokenIn: `0x${string}`;
   tokenOut: `0x${string}`;
 }) => {
-  if ((await args.allowance()) < args.requiredAllowance) {
+  if (
+    !args.skipPreflight &&
+    (await args.allowance()) < args.requiredAllowance
+  ) {
     await args.approve();
   }
 

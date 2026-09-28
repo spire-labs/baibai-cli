@@ -1,4 +1,4 @@
-import { defaultHome } from "../config";
+import { defaultHome, resolveRpcUrl } from "../config";
 import { promptHidden } from "../prompt";
 import {
   clearSigner,
@@ -32,7 +32,7 @@ export const walletCommand = async (argv: string[]) => {
     );
     const key = await promptHidden("Private key: ");
     const saved = saveKey(home, key);
-    const signer = localKeySigner(saved);
+    const signer = localKeySigner(saved, resolveRpcUrl(undefined));
     process.stdout.write(`Saved key for ${signer.address}\n`);
     return;
   }
