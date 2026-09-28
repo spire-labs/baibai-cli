@@ -11,9 +11,6 @@
     "README.md",
     "install.sh"
   ],
-  "publishConfig": {
-    "access": "public"
-  },
   "repository": {
     "type": "git",
     "url": "git+https://github.com/spire-labs/baibai-cli.git"

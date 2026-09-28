@@ -10,12 +10,6 @@ GitHub release binary:
 curl -fsSL https://raw.githubusercontent.com/spire-labs/baibai-cli/main/install.sh | sh
 ```
 
-npm:
-
-```bash
-npm install -g @baibai/cli
-```
-
 ## Quote
 
 ```bash
