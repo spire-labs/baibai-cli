@@ -14,6 +14,9 @@ const USAGE = `Usage:
   baibai wallet import
   baibai wallet status
   baibai wallet disconnect
+
+import stores the private key in plaintext at ~/.baibai/key.
+Anyone who can read that file can spend its funds.
 `;
 
 export const walletCommand = async (argv: string[]) => {
@@ -24,6 +27,9 @@ export const walletCommand = async (argv: string[]) => {
   }
   const home = defaultHome();
   if (action === "import") {
+    process.stderr.write(
+      "Warning: the private key is stored in plaintext at ~/.baibai/key.\nAnyone who can read that file can spend its funds. Use a dedicated key.\n",
+    );
     const key = await promptHidden("Private key: ");
     const saved = saveKey(home, key);
     const signer = localKeySigner(saved);

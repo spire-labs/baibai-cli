@@ -20,13 +20,13 @@ A quote does not need a wallet. Without one, the price is indicative and cannot 
 
 ## Wallet
 
-Import a key. The prompt does not echo, and the key is stored in `~/.baibai/key` with mode `0600`.
+Import a key. The prompt does not echo. The key is stored in plaintext in `~/.baibai/key`. The file is mode `0600` and the directory is mode `0700`. That only stops other users on this machine from reading it. The key is still readable by this account, by root, and by backups, sync, and disk copies of your home directory. Anyone who can read the file can sign and spend. Use a separate key that holds only what you are willing to trade. `baibai wallet disconnect` deletes the file.
 
 ```bash
 baibai wallet import
 ```
 
-`PRIVATE_KEY` signs for that process only and is not written to disk. It wins over the saved key.
+`PRIVATE_KEY` signs for that process only and is not written to disk. It wins over the saved key. A key in the environment can still leak through process listings, crash reports, and shell history.
 
 ```bash
 baibai wallet status
