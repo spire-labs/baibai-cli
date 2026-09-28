@@ -6,6 +6,7 @@ on:
       - "v*.*.*"
 
 permissions:
+  actions: read
   contents: write
 
 jobs:
@@ -46,7 +47,7 @@ jobs:
     needs: binaries
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/download-artifact@d3f86a106a0bac45b974f628e3b5816d86e3092b # v4.3.0
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           path: dist-binaries
       - name: Publish release assets
