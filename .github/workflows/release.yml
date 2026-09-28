@@ -1,0 +1,83 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+
+permissions:
+  contents: write
+
+jobs:
+  binaries:
+    name: Binary
+    strategy:
+      matrix:
+        include:
+          - os: macos-latest
+            target: bun-darwin-arm64
+            asset: baibai-darwin-arm64
+          - os: macos-latest
+            target: bun-darwin-x64
+            asset: baibai-darwin-x64
+          - os: ubuntu-latest
+            target: bun-linux-x64
+            asset: baibai-linux-x64
+          - os: ubuntu-24.04-arm
+            target: bun-linux-arm64
+            asset: baibai-linux-arm64
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      # nosemgrep: yaml.github-actions.security.github-actions-mutable-action-tag.github-actions-mutable-action-tag
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.2
+      - run: bun install --frozen-lockfile
+      - run: bun test
+      - run: bun build src/main.ts --compile --target=${{ matrix.target }} --outfile ${{ matrix.asset }}
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: ${{ matrix.asset }}
+          path: ${{ matrix.asset }}
+
+  github:
+    name: GitHub release
+    needs: binaries
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@d3f86a106a0bac45b974f628e3b5816d86e3092b # v4.3.0
+        with:
+          path: dist-binaries
+      - name: Publish release assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          files=()
+          while IFS= read -r file; do
+            files+=("$file")
+          done < <(find dist-binaries -type f)
+          gh release create "$GITHUB_REF_NAME" "${files[@]}" --title "$GITHUB_REF_NAME" --notes "baibai ${GITHUB_REF_NAME}"
+
+  npm:
+    name: npm
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      # nosemgrep: yaml.github-actions.security.github-actions-mutable-action-tag.github-actions-mutable-action-tag
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.2
+      - run: bun install --frozen-lockfile
+      - run: bun test
+      - run: bun run build
+      - name: Publish @baibai/cli
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          if [ -z "$NODE_AUTH_TOKEN" ]; then
+            echo "NPM_TOKEN is required to publish @baibai/cli"
+            exit 1
+          fi
+          npm config set //registry.npmjs.org/:_authToken "$NODE_AUTH_TOKEN"
+          npm publish --access public
