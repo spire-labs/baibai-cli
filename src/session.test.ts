@@ -17,16 +17,16 @@ describe("openSigner", () => {
     saveKey(home, SAVED_KEY);
     writeConfig(home, { signer: "key" });
     const before = readFileSync(keyPath(home), "utf8");
-    const previous = process.env.BAIBAI_PRIVATE_KEY;
-    process.env.BAIBAI_PRIVATE_KEY = ENV_KEY;
+    const previous = process.env.PRIVATE_KEY;
+    process.env.PRIVATE_KEY = ENV_KEY;
     try {
       const signer = await openSigner(home);
       expect(signer?.kind).toBe("key");
       expect(signer?.address).toBe(privateKeyToAccount(ENV_KEY).address);
       expect(readFileSync(keyPath(home), "utf8")).toBe(before);
     } finally {
-      if (previous === undefined) delete process.env.BAIBAI_PRIVATE_KEY;
-      else process.env.BAIBAI_PRIVATE_KEY = previous;
+      if (previous === undefined) delete process.env.PRIVATE_KEY;
+      else process.env.PRIVATE_KEY = previous;
     }
   });
 

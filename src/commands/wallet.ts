@@ -33,7 +33,7 @@ export const walletCommand = async (argv: string[]) => {
   if (action === "status") {
     const source = selectSignerSource({
       configured: readConfig(home).signer,
-      envKey: process.env.BAIBAI_PRIVATE_KEY,
+      envKey: process.env.PRIVATE_KEY,
     });
     if (!source) throw new Error("No wallet. Run baibai wallet import.");
     const signer = await openSigner(home);
@@ -45,11 +45,11 @@ export const walletCommand = async (argv: string[]) => {
   if (action === "disconnect") {
     const source = selectSignerSource({
       configured: readConfig(home).signer,
-      envKey: process.env.BAIBAI_PRIVATE_KEY,
+      envKey: process.env.PRIVATE_KEY,
     });
     if (source === "env") {
       throw new Error(
-        "BAIBAI_PRIVATE_KEY is set for this process. Unset it to stop using that key.",
+        "PRIVATE_KEY is set for this process. Unset it to stop using that key.",
       );
     }
     deleteKeyFile(home);

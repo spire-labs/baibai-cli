@@ -8,7 +8,7 @@ import type { Signer } from "../signer";
 import { localKeySigner } from "./local-key";
 
 export const openSigner = async (home: string): Promise<Signer | undefined> => {
-  const envKey = process.env.BAIBAI_PRIVATE_KEY;
+  const envKey = process.env.PRIVATE_KEY;
   const source = selectSignerSource({
     configured: readConfig(home).signer,
     envKey,

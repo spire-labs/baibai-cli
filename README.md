@@ -32,7 +32,7 @@ Import a key. The prompt does not echo, and the key is stored in `~/.baibai/key`
 baibai wallet import
 ```
 
-`BAIBAI_PRIVATE_KEY` signs for that process only and is not written to disk. It wins over the saved key.
+`PRIVATE_KEY` signs for that process only and is not written to disk. It wins over the saved key.
 
 ```bash
 baibai wallet status
