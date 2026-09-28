@@ -21,11 +21,6 @@ export const DEFAULT_SLIPPAGE_BPS = 100;
 export const ORDER_POLL_INTERVAL_MS = 2_000;
 export const ORDER_POLL_TIMEOUT_MS = 2 * 60 * 1000;
 
-// WalletConnect Cloud project id. SignClient runs in the npm bundle and in
-// the compiled binary when its storage is a file. The binary has no
-// indexedDB, so the client's default browser storage cannot be used.
-export const WALLETCONNECT_PROJECT_ID = "";
-
 export const asAddress = (value: string) => value as `0x${string}`;
 
 export const defaultHome = () => join(homedir(), ".baibai");
@@ -48,12 +43,4 @@ export const parseSlippageBps = (value: string | undefined) => {
     throw new Error("Slippage must be between 0.01 and 20 percent.");
   }
   return bps;
-};
-
-export const assertWalletConnectConfigured = () => {
-  if (!/^[0-9a-f]{32}$/i.test(WALLETCONNECT_PROJECT_ID)) {
-    throw new Error(
-      "WalletConnect is not configured. Set WALLETCONNECT_PROJECT_ID in src/config.ts to a WalletConnect Cloud project id.",
-    );
-  }
 };

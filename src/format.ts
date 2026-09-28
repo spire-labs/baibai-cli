@@ -37,7 +37,7 @@ export const formatQuoteText = (args: {
     `expires        ${expires}s`,
   ];
   if (args.indicative) {
-    lines.push("Indicative quote. Connect a wallet to trade.");
+    lines.push("Indicative quote. Import a key to trade.");
   }
   return `${lines.join("\n")}\n`;
 };

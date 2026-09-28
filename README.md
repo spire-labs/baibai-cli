@@ -26,30 +26,18 @@ A quote does not need a wallet. Without one, the price is indicative and cannot 
 
 ## Wallet
 
-Connect an existing wallet:
-
-```bash
-baibai wallet connect
-```
-
-That prints a WalletConnect QR. The session is stored in `~/.baibai/`. No private key is written.
-
-Or import a key. The prompt does not echo, and the key is stored in `~/.baibai/key` with mode `0600`.
+Import a key. The prompt does not echo, and the key is stored in `~/.baibai/key` with mode `0600`.
 
 ```bash
 baibai wallet import
 ```
 
-`BAIBAI_PRIVATE_KEY` signs for that process only and is not written to disk. It wins over a saved wallet.
+`BAIBAI_PRIVATE_KEY` signs for that process only and is not written to disk. It wins over the saved key.
 
 ```bash
 baibai wallet status
-baibai wallet use key
-baibai wallet use walletconnect
 baibai wallet disconnect
 ```
-
-`wallet connect` needs `WALLETCONNECT_PROJECT_ID` in `src/config.ts`, a WalletConnect Cloud project id. SignClient runs in both the npm bundle and the compiled binary. The binary has no `indexedDB`, so the session is stored in a file.
 
 ## Swap
 

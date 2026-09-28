@@ -9,10 +9,8 @@ import {
 import { join } from "node:path";
 import { privateKeyToAccount } from "viem/accounts";
 
-export type SignerKind = "key" | "walletconnect";
-
 type Config = {
-  signer?: SignerKind;
+  signer?: "key";
 };
 
 export const ensureHome = (home: string) => {
@@ -22,18 +20,12 @@ export const ensureHome = (home: string) => {
 
 const configPath = (home: string) => join(home, "config.json");
 export const keyPath = (home: string) => join(home, "key");
-export const walletConnectPath = (home: string) =>
-  join(home, "walletconnect.json");
 
 export const readConfig = (home: string): Config => {
   const path = configPath(home);
   if (!existsSync(path)) return {};
   const parsed = JSON.parse(readFileSync(path, "utf8")) as Config;
-  if (
-    parsed.signer !== undefined &&
-    parsed.signer !== "key" &&
-    parsed.signer !== "walletconnect"
-  ) {
+  if (parsed.signer !== undefined && parsed.signer !== "key") {
     throw new Error("Wallet config is invalid.");
   }
   return parsed;
@@ -85,9 +77,9 @@ export const deleteKeyFile = (home: string) => {
 };
 
 export const selectSignerSource = (args: {
-  configured: SignerKind | undefined;
+  configured: "key" | undefined;
   envKey: string | undefined;
-}): "env" | SignerKind | undefined => {
+}): "env" | "key" | undefined => {
   if (args.envKey !== undefined && args.envKey.length > 0) return "env";
   return args.configured;
 };

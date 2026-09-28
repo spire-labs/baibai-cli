@@ -7,7 +7,7 @@ export type TransactionRequest = {
 };
 
 export type Signer = {
-  kind: "key" | "walletconnect";
+  kind: "key";
   address: `0x${string}`;
   signTypedData(typedData: PermitTypedData): Promise<`0x${string}`>;
   sendTransaction(tx: TransactionRequest): Promise<`0x${string}`>;

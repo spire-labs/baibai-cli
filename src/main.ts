@@ -9,9 +9,7 @@ const HELP = `baibai — trade on Base
 
   baibai quote <amount> <tokenIn> <tokenOut>
   baibai swap <amount> <tokenIn> <tokenOut>
-  baibai wallet connect
   baibai wallet import
-  baibai wallet use <key|walletconnect>
   baibai wallet status
   baibai wallet disconnect
   baibai orders
