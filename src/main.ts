@@ -22,7 +22,7 @@ Flags
   --slippage <percent>   default 1
   --exact-out            the amount is the desired output
   --recipient <address>
-  --yes                  skip the swap confirmation
+  --yes                  accept the swap without prompting
   --json
   --api <url>            default https://app.baibai.cx/v1/trpc
 `;

@@ -19,8 +19,6 @@ import type { TokenInfo } from "../types";
 import { presentQuote, requestQuote } from "./quote";
 
 const SWAP_USAGE = "Usage: baibai swap <amount> <tokenIn> <tokenOut>";
-const GAS_LINE =
-  "You pay gas for approval, wrapping, and unwrapping. baibai pays gas for the swap.\n";
 
 export const swapCommand = async (argv: string[]) => {
   let trade: ReturnType<typeof parseTradeArgs>;
@@ -103,7 +101,6 @@ export const swapCommand = async (argv: string[]) => {
       if (plan === "swap-then-unwrap") {
         process.stderr.write("WETH will be unwrapped to ETH after the swap.\n");
       }
-      process.stderr.write(GAS_LINE);
     }
     if (!(await accept(trade.yes))) return;
 

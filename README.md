@@ -57,7 +57,7 @@ baibai wallet disconnect
 baibai swap 10 usdc weth
 ```
 
-The command prints the quote and asks you to confirm. `--yes` skips the prompt. It approves Permit2 if needed, signs the Permit2 witness, submits the order, and waits until the order is filled, failed, or expired. `eth` is wrapped or unwrapped around the swap, the same way the app does it.
+The command prints the quote and asks you to confirm. Enter accepts. `--yes` skips the prompt. It approves Permit2 if needed, signs the Permit2 witness, submits the order, and waits until the order is filled, failed, or expired. `eth` is wrapped or unwrapped around the swap, the same way the app does it.
 
 ```bash
 baibai orders

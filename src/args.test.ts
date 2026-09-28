@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { parseTradeArgs } from "./args";
 import { parseSlippageBps } from "./config";
 import { formatRawAmount } from "./format";
+import { accepted } from "./prompt";
 import { parseHumanAmount } from "./swap/amounts";
 import { nativePlan } from "./swap/native";
 import { resolveSymbol, tokenByAddress } from "./tokens";
@@ -57,6 +58,25 @@ describe("parseTradeArgs", () => {
 
   test("rejects a missing token", () => {
     expect(() => parseTradeArgs(["10", "usdc"], "usage")).toThrow("usage");
+  });
+
+  test("parses --yes", () => {
+    expect(parseTradeArgs(["10", "usdc", "weth", "--yes"], "usage").yes).toBe(
+      true,
+    );
+  });
+});
+
+describe("accepted", () => {
+  test("treats enter, y, and yes as acceptance", () => {
+    expect(accepted("")).toBe(true);
+    expect(accepted("y")).toBe(true);
+    expect(accepted("YES")).toBe(true);
+  });
+
+  test("rejects any other answer", () => {
+    expect(accepted("n")).toBe(false);
+    expect(accepted("no")).toBe(false);
   });
 });
 

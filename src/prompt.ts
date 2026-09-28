@@ -1,11 +1,11 @@
 import { createInterface } from "node:readline";
 
-export const confirmed = (answer: string) => {
+export const accepted = (answer: string) => {
   const value = answer.trim().toLowerCase();
-  return value === "y" || value === "yes";
+  return value === "" || value === "y" || value === "yes";
 };
 
-export const promptLine = async (label: string) => {
+const promptLine = async (label: string) => {
   const rl = createInterface({
     input: process.stdin,
     output: process.stderr,
@@ -52,4 +52,4 @@ export const promptHidden = async (label: string) => {
 };
 
 export const promptConfirm = async () =>
-  confirmed(await promptLine("Swap? [y/N] "));
+  accepted(await promptLine("Swap? [Y/n] "));
