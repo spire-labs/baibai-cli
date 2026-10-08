@@ -6,7 +6,7 @@ import {
 } from "../config";
 import { LIFI_DIAMOND_ADDRESS } from "../permit";
 import type { Signer } from "../signer";
-import type { Order, Quote } from "../types";
+import type { Order, Quote, RelayerQuote, UserQuote } from "../types";
 import { executeSwap } from "./execute";
 
 const OWNER = "0x2222222222222222222222222222222222222222" as const;
@@ -19,9 +19,12 @@ const RAW_IN = "1000000000000000000";
 const RAW_OUT = "3100000000";
 const RAW_MIN = "3069000000";
 
-const quote = (spender: string = PERMIT2_PROXY_ADDRESS): Quote => {
+const quote = (spender: string = PERMIT2_PROXY_ADDRESS): RelayerQuote => {
   const deadline = Math.floor(Date.now() / 1000) + 60;
   return {
+    attestation: "attest",
+    chainIdIn: BASE_CHAIN_ID,
+    chainIdOut: BASE_CHAIN_ID,
     expectedAmountIn: RAW_IN,
     expectedAmountOut: RAW_OUT,
     expiresAtMs: deadline * 1000,
@@ -71,6 +74,7 @@ const quote = (spender: string = PERMIT2_PROXY_ADDRESS): Quote => {
     priceImpactBps: 4,
     quoteId: "quote-1",
     recipient: OWNER,
+    settlement: "relayer" as const,
     slippageBps: 100,
     tokenIn: WETH,
     tokenOut: USDC,
@@ -121,6 +125,7 @@ const run = (args: {
   const wallet = signer();
   const approvals: string[] = [];
   let allowanceReads = 0;
+  const created: Array<{ permit2Signature: string; quoteId: string }> = [];
   const promise = executeSwap({
     allowance: async () => {
       allowanceReads += 1;
@@ -129,9 +134,16 @@ const run = (args: {
     approve: async () => {
       approvals.push("approve");
     },
-    sleep: async () => undefined,
     authorizedAmountIn: BigInt(RAW_IN),
-    createOrder: async () => args.status ?? order("pending"),
+    createOrder: async (input) => {
+      created.push({
+        permit2Signature: input.permit2Signature,
+        quoteId: input.quote.quoteId,
+      });
+      return args.status ?? order("pending");
+    },
+    destinationChainId: BASE_CHAIN_ID,
+    expectedSettlement: (args.fresh ?? quote()).settlement,
     intent: "exactIn",
     minimumAmountOut: BigInt(RAW_MIN),
     orderStatus: async () => args.status ?? order("filled"),
@@ -139,12 +151,19 @@ const run = (args: {
     quoteOnce: async () => args.fresh ?? quote(),
     recipient: OWNER,
     requiredAllowance: BigInt(RAW_IN),
+    sendUserSwap: async () => {
+      wallet.calls.push("send");
+      return { amountOut: RAW_OUT, txHash: `0x${"cd".repeat(32)}` };
+    },
     signer: wallet,
     skipPreflight: args.skipPreflight,
+    sleep: async () => undefined,
     slippageBps: 100,
+    sourceChainId: BASE_CHAIN_ID,
     tokenIn: WETH,
     tokenOut: USDC,
   });
+  return { allowanceReads, approvals, created, promise, wallet };
   return { allowanceReads, approvals, promise, wallet };
 };
 
@@ -184,6 +203,46 @@ describe("executeSwap", () => {
     });
     const { promise } = run({ allowance: BigInt(RAW_IN), status: failed });
     await expect(promise).rejects.toThrow("FILL_FAILED: the swap reverted");
+  });
+
+  test("submits the quote that was signed", async () => {
+    const { created, promise } = run({ allowance: BigInt(RAW_IN) });
+    await promise;
+    expect(created).toEqual([
+      {
+        permit2Signature: `0x${"ab".repeat(65)}`,
+        quoteId: "quote-1",
+      },
+    ]);
+  });
+
+  test("broadcasts an owner-paid quote without signing", async () => {
+    const {
+      permit2TypedData: _typed,
+      settlement: _settlement,
+      venue: _venue,
+      ...rest
+    } = quote();
+    const fresh: UserQuote = {
+      ...rest,
+      settlement: "user",
+      transactionRequest: {
+        chainId: BASE_CHAIN_ID,
+        data: CALLDATA,
+        to: LIFI_DIAMOND_ADDRESS,
+        value: "0",
+      },
+      venue: { lifi: { calldata: CALLDATA, step: {} } },
+    };
+    const { created, promise, wallet } = run({
+      allowance: BigInt(RAW_IN),
+      fresh,
+    });
+    const filled = await promise;
+    expect(wallet.calls).toEqual(["send"]);
+    expect(created).toEqual([]);
+    expect(filled.settlement).toBe("user");
+    expect(filled.txHash).toBe(`0x${"cd".repeat(32)}`);
   });
 
   test("does not sign a quote with a substituted spender", async () => {

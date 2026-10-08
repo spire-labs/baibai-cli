@@ -17,11 +17,12 @@ export const ordersCommand = async (argv: string[]) => {
     throw error;
   }
   if (parsed.positionals.length > 0) {
-    throw new Error("Usage: baibai orders [--limit 20]");
+    throw new Error("Usage: baibai orders [--limit 20] [--cursor <cursor>]");
   }
   const signer = await requireSigner(defaultHome());
   try {
     const page = await createApi(parsed.apiUrl).order.byOwner.query({
+      cursor: parsed.cursor,
       limit: parsed.limit,
       owner: signer.address,
     });
@@ -32,10 +33,12 @@ export const ordersCommand = async (argv: string[]) => {
         : `${items
             .map(
               (item) =>
-                `${item.orderId}  ${item.status}  ${item.amountIn ?? "?"} → ${item.amountOut ?? "?"}`,
+                `${item.orderId}  ${item.status}  ${item.amountIn ?? "?"} → ${item.amountOut ?? "?"}${item.gain ? `  gain $${item.gain}` : ""}`,
             )
-            .join("\n")}\n`;
-    writeOut(parsed.json, { orders: items }, text);
+            .join(
+              "\n",
+            )}${page.nextCursor ? `\nnext     ${page.nextCursor}` : ""}\n`;
+    writeOut(parsed.json, { nextCursor: page.nextCursor, orders: items }, text);
   } finally {
     await signer.close?.();
   }
@@ -72,7 +75,10 @@ const summarize = (order: Order) => ({
   error: order.error
     ? `${order.error.code}: ${order.error.message}`
     : undefined,
+  gain: order.gain?.amountOutUsd,
   orderId: order.orderId,
   status: order.status,
+  tokenIn: order.tokenIn,
+  tokenOut: order.tokenOut,
   txHash: order.txHash,
 });

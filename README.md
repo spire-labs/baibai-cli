@@ -1,6 +1,6 @@
 # baibai
 
-Trade on Base from the command line. Quotes and swaps use the baibai API. The swap is broadcast by baibai. You pay gas only for an ERC-20 approval, wrapping ETH, or unwrapping WETH.
+Trade from the command line on the same networks as the app. Quotes and swaps use the baibai API. On Base, baibai can submit the swap: you pay gas only for an ERC-20 approval, wrapping the native token, or unwrapping it. On other routes the API returns a transaction, and this key approves the router and broadcasts it.
 
 ## Install
 
@@ -14,9 +14,14 @@ curl -fsSL https://raw.githubusercontent.com/spire-labs/baibai-cli/main/install.
 
 ```bash
 baibai quote 10 usdc weth
+baibai quote 10 usdc eth --from arbitrum
+baibai quote 25 usdc eth --from base --to optimism
+baibai quote 10 arb:usdc eth:weth
 ```
 
-A quote does not need a wallet. Without one, the price is indicative and cannot be signed. Tokens are a symbol (`usdc`, `weth`, `eth`) or a `0x` address. The default is an exact-in sell. `--exact-out` makes the amount the desired output. `--slippage` is a percent and defaults to 1.
+A quote does not need a wallet. Without one, the price is indicative and cannot be signed. Tokens are a symbol (`usdc`, `weth`, `eth`) or a `0x` address. `eth` is the native token. On other networks the native symbol works too (`bnb`, `pol`). A token can name its network with `network:token`. `--from` sets the sell network and, unless `--to` is set, the buy network as well. The default is Base. `--exact-out` makes the amount the desired output. `--slippage` is a percent and defaults to 1. `--recipient` is an `0x` address or an ENS name.
+
+Wrapping and unwrapping the native token is 1:1 and is not quoted.
 
 ## Wallet
 
@@ -37,17 +42,39 @@ baibai wallet disconnect
 
 ```bash
 baibai swap 10 usdc weth
+baibai swap 10 usdc eth --from arbitrum --yes
 ```
 
-The command prints the quote and asks you to confirm. Enter accepts. `--yes` skips the prompt. It approves Permit2 if needed, signs the Permit2 witness, submits the order, and waits until the order is filled, failed, or expired. `eth` is wrapped or unwrapped around the swap, the same way the app does it. `--fast` skips the balance and Permit2 allowance `eth_call`s and submits immediately. Permit2 must already be approved, and an insufficient balance fails when the order is filled.
+The command prints the quote and asks you to confirm. Enter accepts. `--yes` skips the prompt. A `relayer` quote approves Permit2 if needed, signs the Permit2 witness, submits the order, and waits until the order is filled, failed, or expired. A `user` quote approves the venue router and sends the swap transaction from this key. `eth` is wrapped or unwrapped around a same-chain swap. A native token bought on another network is delivered by the bridge and is not unwrapped here. `--fast` skips the balance and allowance `eth_call`s and submits immediately. The token must already be approved, and an insufficient balance fails when the order is filled or the transaction reverts.
 
 ```bash
 baibai orders
+baibai orders --cursor <cursor>
 baibai order <orderId>
 baibai balance
+baibai balance --chain base
+baibai gains
 ```
 
-`--json` prints one JSON object. `--api` overrides the API URL. The default is `https://app.baibai.cx/v1/trpc`. `BAIBAI_API_URL` is the same override. `--rpc` overrides the Base RPC URL used to read balances, send approvals, and wrap or unwrap ETH. The default is `https://mainnet.base.org`. `RPC_URL` is the same override.
+## Tokens, names, and points
+
+```bash
+baibai tokens
+baibai tokens search usd
+baibai tokens stocks
+baibai token base usdc
+baibai token base usdc --period 1w
+baibai name vitalik.eth
+baibai points
+baibai points leaderboard
+baibai points referral
+baibai points referral bind <username>
+baibai points referral rename <username>
+```
+
+Referral changes are signed by the key. A username is 3–32 letters, digits, or underscores, and it can be renamed once.
+
+`--json` prints one JSON object. `--api` overrides the API URL. The default is `https://app.baibai.cx/v1/trpc`. `BAIBAI_API_URL` is the same override. `--rpc` overrides the RPC for the network the command sends transactions on. Each network has a public RPC. `RPC_URL` overrides Base only.
 
 ## Develop
 

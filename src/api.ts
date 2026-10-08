@@ -1,38 +1,152 @@
-import { BASE_CHAIN_ID } from "./config";
-import type { Order, Portfolio, Quote, QuoteRequest, TokenInfo } from "./types";
+import type {
+  Address,
+  GainStats,
+  NetworkTokenInfo,
+  Order,
+  OrderPage,
+  PointsLeaderboard,
+  PointsProgramConfig,
+  PointsSummary,
+  Portfolio,
+  Quote,
+  QuoteRequest,
+  TokenDetails,
+  TokenInfo,
+  TokenPrice,
+  TokenPriceHistory,
+  TokenStats,
+} from "./types";
 
 export type Api = {
+  names: {
+    resolve: {
+      query: (input: { name: string }) => Promise<{ address: string | null }>;
+    };
+    reverse: {
+      query: (input: { address: Address }) => Promise<{ name: string | null }>;
+    };
+  };
   order: {
     byOwner: {
-      query: (input: { limit?: number; owner: `0x${string}` }) => Promise<{
-        items: Order[];
-      }>;
+      query: (input: {
+        cursor?: string;
+        limit?: number;
+        owner: Address;
+      }) => Promise<OrderPage>;
     };
     create: {
       mutate: (input: {
-        permit2Signature: `0x${string}`;
-        quoteId: string;
+        permit2Signature: Address;
+        quote: Quote;
       }) => Promise<Order>;
+    };
+    gainsByOwner: {
+      query: (input: { owner: Address }) => Promise<GainStats>;
     };
     status: {
       query: (input: { orderId: string }) => Promise<Order>;
+    };
+  };
+  points: {
+    bindReferral: {
+      mutate: (input: {
+        deadlineMs: number;
+        owner: Address;
+        referrerUsername: string;
+        signature: Address;
+      }) => Promise<null>;
+    };
+    createReferralUsername: {
+      mutate: (input: {
+        deadlineMs: number;
+        owner: Address;
+        signature: Address;
+      }) => Promise<null>;
+    };
+    leaderboard: {
+      query: (input: {
+        limit?: number;
+        page?: number;
+      }) => Promise<PointsLeaderboard>;
+    };
+    programConfig: {
+      query: () => Promise<PointsProgramConfig>;
+    };
+    summary: {
+      query: (input: { owner: Address }) => Promise<PointsSummary>;
+    };
+    updateReferralUsername: {
+      mutate: (input: {
+        deadlineMs: number;
+        owner: Address;
+        signature: Address;
+        username: string;
+      }) => Promise<null>;
     };
   };
   quote: {
     once: { query: (input: QuoteRequest) => Promise<Quote> };
   };
   tokens: {
-    get: { query: (input: { address: `0x${string}` }) => Promise<TokenInfo> };
-    list: { query: () => Promise<TokenInfo[]> };
+    get: {
+      query: (input: {
+        address: Address;
+        owner?: Address;
+      }) => Promise<TokenDetails>;
+    };
+    list: { query: (input: { chainId: number }) => Promise<TokenInfo[]> };
+    popular: { query: () => Promise<NetworkTokenInfo[]> };
+    priceHistory: {
+      query: (input: {
+        chainId: number;
+        period: TokenPriceHistory["period"];
+        token: Address;
+      }) => Promise<TokenPriceHistory>;
+    };
+    prices: {
+      query: (input: {
+        chainId: number;
+        tokens: Address[];
+      }) => Promise<TokenPrice[]>;
+    };
+    search: {
+      query: (input: {
+        category?: "stocks" | "tokens";
+        limit?: number;
+        query: string;
+      }) => Promise<NetworkTokenInfo[]>;
+    };
+    stats: {
+      query: (input: {
+        chainId: number;
+        token: Address;
+      }) => Promise<TokenStats>;
+    };
+    stocks: { query: () => Promise<NetworkTokenInfo[]> };
   };
   wallet: {
     portfolio: {
-      query: (input: { owner: `0x${string}` }) => Promise<Portfolio>;
+      query: (input: {
+        chainId?: number;
+        owner: Address;
+        tokens?: Address[];
+      }) => Promise<Portfolio>;
+    };
+    portfolios: {
+      query: (input: { owner: Address }) => Promise<Portfolio[]>;
     };
   };
 };
 
 export const createApi = (url: string): Api => ({
+  names: {
+    resolve: {
+      query: (input) => call(url, "names.resolve", "query", input),
+    },
+    reverse: {
+      query: (input) => call(url, "names.reverse", "query", input),
+    },
+  },
   order: {
     byOwner: {
       query: (input) => call(url, "order.byOwner", "query", input),
@@ -40,7 +154,32 @@ export const createApi = (url: string): Api => ({
     create: {
       mutate: (input) => call(url, "order.create", "mutation", input),
     },
+    gainsByOwner: {
+      query: (input) => call(url, "order.gainsByOwner", "query", input),
+    },
     status: { query: (input) => call(url, "order.status", "query", input) },
+  },
+  points: {
+    bindReferral: {
+      mutate: (input) => call(url, "points.bindReferral", "mutation", input),
+    },
+    createReferralUsername: {
+      mutate: (input) =>
+        call(url, "points.createReferralUsername", "mutation", input),
+    },
+    leaderboard: {
+      query: (input) => call(url, "points.leaderboard", "query", input),
+    },
+    programConfig: {
+      query: () => call(url, "points.programConfig", "query"),
+    },
+    summary: {
+      query: (input) => call(url, "points.summary", "query", input),
+    },
+    updateReferralUsername: {
+      mutate: (input) =>
+        call(url, "points.updateReferralUsername", "mutation", input),
+    },
   },
   quote: {
     once: { query: (input) => call(url, "quote.once", "query", input) },
@@ -48,13 +187,23 @@ export const createApi = (url: string): Api => ({
   tokens: {
     get: { query: (input) => call(url, "tokens.get", "query", input) },
     list: {
-      query: () =>
-        call(url, "tokens.list", "query", { chainId: BASE_CHAIN_ID }),
+      query: (input) => call(url, "tokens.list", "query", input),
     },
+    popular: { query: () => call(url, "tokens.popular", "query") },
+    priceHistory: {
+      query: (input) => call(url, "tokens.priceHistory", "query", input),
+    },
+    prices: { query: (input) => call(url, "tokens.prices", "query", input) },
+    search: { query: (input) => call(url, "tokens.search", "query", input) },
+    stats: { query: (input) => call(url, "tokens.stats", "query", input) },
+    stocks: { query: () => call(url, "tokens.stocks", "query") },
   },
   wallet: {
     portfolio: {
       query: (input) => call(url, "wallet.portfolio", "query", input),
+    },
+    portfolios: {
+      query: (input) => call(url, "wallet.portfolios", "query", input),
     },
   },
 });

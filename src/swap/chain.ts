@@ -4,17 +4,13 @@ import {
   erc20Abi,
   http,
   maxUint256,
+  type TransactionReceipt,
 } from "viem";
-import { base } from "viem/chains";
-import {
-  asAddress,
-  NATIVE_TOKEN_ADDRESS,
-  PERMIT2_ADDRESS,
-  WRAPPED_NATIVE_ADDRESS,
-} from "../config";
+import { NATIVE_TOKEN_ADDRESS } from "../config";
+import { chainFor, requireNetwork } from "../networks";
 import type { Signer } from "../signer";
 
-const wethAbi = [
+const wrappedNativeAbi = [
   {
     inputs: [],
     name: "deposit",
@@ -34,19 +30,26 @@ const wethAbi = [
 const same = (left: string, right: string) =>
   left.toLowerCase() === right.toLowerCase();
 
-export const settlementClient = (rpcUrl: string) =>
-  createPublicClient({ chain: base, transport: http(rpcUrl) });
+export const settlementClient = (chainId: number, rpcUrl: string) => {
+  const network = requireNetwork(chainId);
+  return createPublicClient({
+    chain: chainFor(network, rpcUrl),
+    transport: http(rpcUrl),
+  });
+};
 
 export const readAllowance = async (
   token: `0x${string}`,
   owner: `0x${string}`,
+  spender: `0x${string}`,
+  chainId: number,
   rpcUrl: string,
 ) => {
   if (same(token, NATIVE_TOKEN_ADDRESS)) return maxUint256;
-  return settlementClient(rpcUrl).readContract({
+  return settlementClient(chainId, rpcUrl).readContract({
     abi: erc20Abi,
     address: token,
-    args: [owner, asAddress(PERMIT2_ADDRESS)],
+    args: [owner, spender],
     functionName: "allowance",
   });
 };
@@ -54,9 +57,10 @@ export const readAllowance = async (
 export const readBalance = async (
   token: `0x${string}`,
   owner: `0x${string}`,
+  chainId: number,
   rpcUrl: string,
 ) => {
-  const client = settlementClient(rpcUrl);
+  const client = settlementClient(chainId, rpcUrl);
   if (same(token, NATIVE_TOKEN_ADDRESS)) {
     return client.getBalance({ address: owner });
   }
@@ -68,51 +72,69 @@ export const readBalance = async (
   });
 };
 
-export const waitForReceipt = async (hash: `0x${string}`, rpcUrl: string) => {
-  await settlementClient(rpcUrl).waitForTransactionReceipt({ hash });
-};
+export const waitForReceipt = async (
+  hash: `0x${string}`,
+  chainId: number,
+  rpcUrl: string,
+) => settlementClient(chainId, rpcUrl).waitForTransactionReceipt({ hash });
 
-export const approvePermit2 = async (
+export const approveSpender = async (
   signer: Signer,
   token: `0x${string}`,
+  spender: `0x${string}`,
+  chainId: number,
   rpcUrl: string,
 ) => {
   const hash = await signer.sendTransaction({
     data: encodeFunctionData({
       abi: erc20Abi,
-      args: [asAddress(PERMIT2_ADDRESS), maxUint256],
+      args: [spender, maxUint256],
       functionName: "approve",
     }),
     to: token,
   });
-  await waitForReceipt(hash, rpcUrl);
+  const receipt = await waitForReceipt(hash, chainId, rpcUrl);
+  if (receipt.status !== "success") {
+    throw new Error("Token approval failed.");
+  }
 };
 
 export const depositNative = async (
   signer: Signer,
+  wrapped: `0x${string}`,
   amount: bigint,
-  rpcUrl: string,
-) => {
-  const hash = await signer.sendTransaction({
-    data: encodeFunctionData({ abi: wethAbi, functionName: "deposit" }),
-    to: asAddress(WRAPPED_NATIVE_ADDRESS),
-    value: amount,
-  });
-  await waitForReceipt(hash, rpcUrl);
-};
-
-export const withdrawNative = async (
-  signer: Signer,
-  amount: bigint,
+  chainId: number,
   rpcUrl: string,
 ) => {
   const hash = await signer.sendTransaction({
     data: encodeFunctionData({
-      abi: wethAbi,
+      abi: wrappedNativeAbi,
+      functionName: "deposit",
+    }),
+    to: wrapped,
+    value: amount,
+  });
+  const receipt = await waitForReceipt(hash, chainId, rpcUrl);
+  if (receipt.status !== "success") throw new Error("Wrap failed.");
+};
+
+export const withdrawNative = async (
+  signer: Signer,
+  wrapped: `0x${string}`,
+  amount: bigint,
+  chainId: number,
+  rpcUrl: string,
+) => {
+  const hash = await signer.sendTransaction({
+    data: encodeFunctionData({
+      abi: wrappedNativeAbi,
       args: [amount],
       functionName: "withdraw",
     }),
-    to: asAddress(WRAPPED_NATIVE_ADDRESS),
+    to: wrapped,
   });
-  await waitForReceipt(hash, rpcUrl);
+  const receipt = await waitForReceipt(hash, chainId, rpcUrl);
+  if (receipt.status !== "success") throw new Error("Unwrap failed.");
 };
+
+export type SettlementReceipt = Pick<TransactionReceipt, "logs" | "status">;

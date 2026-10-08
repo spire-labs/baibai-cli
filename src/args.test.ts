@@ -1,10 +1,16 @@
 import { describe, expect, test } from "bun:test";
 import { parseTradeArgs } from "./args";
-import { DEFAULT_RPC_URL, parseSlippageBps, resolveRpcUrl } from "./config";
+import {
+  BASE_CHAIN_ID,
+  DEFAULT_RPC_URL,
+  parseSlippageBps,
+  resolveRpcUrl,
+} from "./config";
 import { formatDuration, formatRawAmount } from "./format";
+import { requireNetwork } from "./networks";
 import { accepted } from "./prompt";
 import { parseHumanAmount } from "./swap/amounts";
-import { nativePlan } from "./swap/native";
+import { nativePlan, resolveSwapTokens } from "./swap/native";
 import { resolveSymbol, tokenByAddress } from "./tokens";
 import type { TokenInfo } from "./types";
 
@@ -112,6 +118,24 @@ describe("resolveRpcUrl", () => {
   test("rejects an empty rpc url", () => {
     expect(() => resolveRpcUrl("  ")).toThrow("RPC URL is empty.");
   });
+
+  test("uses a network's own RPC unless the flag overrides it", () => {
+    const previous = process.env.RPC_URL;
+    process.env.RPC_URL = "https://base.example";
+    try {
+      const arbitrum = requireNetwork(42161);
+      expect(resolveRpcUrl(undefined, arbitrum.id)).toBe(arbitrum.rpcUrl);
+      expect(resolveRpcUrl("https://flag.example", arbitrum.id)).toBe(
+        "https://flag.example",
+      );
+      expect(resolveRpcUrl(undefined, BASE_CHAIN_ID)).toBe(
+        "https://base.example",
+      );
+    } finally {
+      if (previous === undefined) delete process.env.RPC_URL;
+      else process.env.RPC_URL = previous;
+    }
+  });
 });
 
 describe("accepted", () => {
@@ -188,6 +212,39 @@ describe("resolveSymbol", () => {
   });
 });
 
+describe("parseTradeArgs chains", () => {
+  test("defaults both sides to Base and lets a token name its network", () => {
+    expect(parseTradeArgs(["10", "usdc", "weth"], "usage")).toMatchObject({
+      destination: { id: BASE_CHAIN_ID },
+      source: { id: BASE_CHAIN_ID },
+      tokenIn: "usdc",
+    });
+    expect(
+      parseTradeArgs(["10", "arb:usdc", "eth:weth"], "usage"),
+    ).toMatchObject({
+      destination: { id: 1 },
+      source: { id: 42161 },
+      tokenIn: "usdc",
+      tokenOut: "weth",
+    });
+  });
+
+  test("keeps a trade on the source network unless --to is set", () => {
+    expect(
+      parseTradeArgs(["10", "usdc", "weth", "--from", "arbitrum"], "usage"),
+    ).toMatchObject({
+      destination: { id: 42161 },
+      source: { id: 42161 },
+    });
+    expect(
+      parseTradeArgs(
+        ["10", "usdc", "weth", "--from", "base", "--to", "optimism"],
+        "usage",
+      ).destination.id,
+    ).toBe(10);
+  });
+});
+
 describe("nativePlan", () => {
   test("wraps eth to weth and swaps the other pairs", () => {
     expect(nativePlan(ETH.address, WETH.address)).toBe("wrap");
@@ -195,5 +252,30 @@ describe("nativePlan", () => {
     expect(nativePlan(ETH.address, USDC.address)).toBe("wrap-then-swap");
     expect(nativePlan(USDC.address, ETH.address)).toBe("swap-then-unwrap");
     expect(nativePlan(USDC.address, WETH.address)).toBe("swap");
+  });
+
+  test("quotes Celo's native token as its ERC-20 and leaves a bridged native buy", () => {
+    const celo = requireNetwork(42220);
+    expect(nativePlan(ETH.address, USDC.address, celo.id, celo.id)).toBe(
+      "swap",
+    );
+    expect(
+      resolveSwapTokens({
+        buy: { address: USDC.address, chainId: celo.id },
+        sell: { address: ETH.address, chainId: celo.id },
+      }).tokenIn.toLowerCase(),
+    ).toBe(celo.nativeErc20?.toLowerCase() ?? "");
+    expect(nativePlan(USDC.address, ETH.address, BASE_CHAIN_ID, 42161)).toBe(
+      "swap",
+    );
+    expect(
+      resolveSwapTokens({
+        buy: { address: ETH.address, chainId: 42161 },
+        sell: { address: USDC.address, chainId: BASE_CHAIN_ID },
+      }).tokenOut,
+    ).toBe(ETH.address as `0x${string}`);
+    expect(() =>
+      nativePlan(ETH.address, ETH.address, BASE_CHAIN_ID, BASE_CHAIN_ID),
+    ).toThrow("Choose two different tokens.");
   });
 });

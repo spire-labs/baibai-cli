@@ -1,7 +1,16 @@
 import { ORDER_POLL_INTERVAL_MS, ORDER_POLL_TIMEOUT_MS } from "../config";
 import { assertQuotePermit } from "../permit";
 import type { Signer } from "../signer";
-import type { Order, Quote, QuoteRequest } from "../types";
+import type { Order, Quote, QuoteRequest, UserQuote } from "../types";
+
+export type SettledSwap = {
+  amountIn?: string;
+  amountOut: string;
+  orderId?: string;
+  settlement: Quote["settlement"];
+  status: "filled";
+  txHash?: string;
+};
 
 export const executeSwap = async (args: {
   allowance: () => Promise<bigint>;
@@ -9,8 +18,10 @@ export const executeSwap = async (args: {
   authorizedAmountIn: bigint;
   createOrder: (input: {
     permit2Signature: `0x${string}`;
-    quoteId: string;
+    quote: Quote;
   }) => Promise<Order>;
+  destinationChainId: number;
+  expectedSettlement: Quote["settlement"];
   intent: "exactIn" | "exactOut";
   intervalMs?: number;
   minimumAmountOut: bigint;
@@ -20,14 +31,19 @@ export const executeSwap = async (args: {
   quoteOnce: (input: QuoteRequest) => Promise<Quote>;
   recipient: `0x${string}`;
   requiredAllowance: bigint;
+  sendUserSwap: (quote: UserQuote) => Promise<{
+    amountOut: string;
+    txHash: `0x${string}`;
+  }>;
   signer: Signer;
   skipPreflight?: boolean;
   sleep?: (ms: number) => Promise<void>;
   slippageBps: number;
+  sourceChainId: number;
   timeoutMs?: number;
   tokenIn: `0x${string}`;
   tokenOut: `0x${string}`;
-}) => {
+}): Promise<SettledSwap> => {
   if (
     !args.skipPreflight &&
     (await args.allowance()) < args.requiredAllowance
@@ -36,6 +52,7 @@ export const executeSwap = async (args: {
   }
 
   const fresh = await args.quoteOnce({
+    destinationChainId: args.destinationChainId,
     intent:
       args.intent === "exactIn"
         ? { amountIn: args.authorizedAmountIn.toString(), type: "exactIn" }
@@ -43,11 +60,14 @@ export const executeSwap = async (args: {
     owner: args.owner,
     recipient: args.recipient,
     slippageBps: args.slippageBps,
+    sourceChainId: args.sourceChainId,
     tokenIn: args.tokenIn,
     tokenOut: args.tokenOut,
   });
   assertQuotePermit({
     authorizedAmountIn: args.authorizedAmountIn,
+    destinationChainId: args.destinationChainId,
+    expectedSettlement: args.expectedSettlement,
     intent: args.intent,
     minimumAmountOut: args.minimumAmountOut,
     nowMs: (args.now ?? Date.now)(),
@@ -55,16 +75,28 @@ export const executeSwap = async (args: {
     quote: fresh,
     recipient: args.recipient,
     slippageBps: args.slippageBps,
+    sourceChainId: args.sourceChainId,
     tokenIn: args.tokenIn,
     tokenOut: args.tokenOut,
   });
+
+  if (fresh.settlement === "user") {
+    const sent = await args.sendUserSwap(fresh);
+    return {
+      amountIn: fresh.maxAmountIn,
+      amountOut: sent.amountOut,
+      settlement: "user",
+      status: "filled",
+      txHash: sent.txHash,
+    };
+  }
 
   const permit2Signature = await args.signer.signTypedData(
     fresh.permit2TypedData,
   );
   let order = await args.createOrder({
     permit2Signature,
-    quoteId: fresh.quoteId,
+    quote: fresh,
   });
   const now = args.now ?? Date.now;
   const sleep =
@@ -84,5 +116,15 @@ export const executeSwap = async (args: {
       : order.status;
     throw new Error(detail);
   }
-  return order;
+  if (!order.amountOutDelivered) {
+    throw new Error("The fill did not report an output amount.");
+  }
+  return {
+    amountIn: order.amountInSpent,
+    amountOut: order.amountOutDelivered,
+    orderId: order.orderId,
+    settlement: "relayer",
+    status: "filled",
+    txHash: order.txHash,
+  };
 };

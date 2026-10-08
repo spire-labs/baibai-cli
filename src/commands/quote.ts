@@ -5,24 +5,12 @@ import { asAddress, defaultHome, INDICATIVE_OWNER } from "../config";
 import { formatQuoteText, formatRawAmount, writeOut } from "../format";
 import { openSigner } from "../signers/open";
 import { parseHumanAmount } from "../swap/amounts";
-import { isAddress, resolveSymbol, tokenByAddress } from "../tokens";
+import { describeTrade } from "../swap/trade";
+import { isAddress } from "../tokens";
 import type { Quote, QuoteRequest, TokenInfo } from "../types";
 
-export const QUOTE_USAGE = "Usage: baibai quote <amount> <tokenIn> <tokenOut>";
-
-export const loadToken = async (
-  input: string,
-  tokens: TokenInfo[],
-  getByAddress: (address: `0x${string}`) => Promise<TokenInfo>,
-) => {
-  if (isAddress(input)) {
-    return (
-      tokenByAddress(input, tokens) ??
-      getByAddress(input.toLowerCase() as `0x${string}`)
-    );
-  }
-  return resolveSymbol(input, tokens);
-};
+export const QUOTE_USAGE =
+  "Usage: baibai quote <amount> <tokenIn> <tokenOut> [--from <network>] [--to <network>]";
 
 export const quoteIntent = (
   exactOut: boolean,
@@ -34,18 +22,23 @@ export const quoteIntent = (
 
 export const presentQuote = (args: {
   buy: TokenInfo;
+  destinationName: string;
   indicative: boolean;
   nowMs: number;
   quote: Quote;
   sell: TokenInfo;
   sellAmount: string;
+  sourceName: string;
 }) => {
   const body = {
     buy: {
       address: args.buy.address,
       amount: formatRawAmount(args.quote.expectedAmountOut, args.buy.decimals),
+      chain: args.destinationName,
       symbol: args.buy.symbol,
     },
+    chainIdIn: args.quote.chainIdIn,
+    chainIdOut: args.quote.chainIdOut,
     expiresAtMs: args.quote.expiresAtMs,
     indicative: args.indicative,
     minAmountOut: formatRawAmount(args.quote.minAmountOut, args.buy.decimals),
@@ -54,12 +47,15 @@ export const presentQuote = (args: {
     sell: {
       address: args.sell.address,
       amount: args.sellAmount,
+      chain: args.sourceName,
       symbol: args.sell.symbol,
     },
+    settlement: args.quote.settlement,
     slippageBps: args.quote.slippageBps,
   };
   const text = formatQuoteText({
     buyAmount: body.buy.amount,
+    buyChain: args.destinationName,
     buySymbol: args.buy.symbol,
     expiresAtMs: args.quote.expiresAtMs,
     indicative: args.indicative,
@@ -67,7 +63,9 @@ export const presentQuote = (args: {
     nowMs: args.nowMs,
     priceImpactBps: args.quote.priceImpactBps,
     sellAmount: args.sellAmount,
+    sellChain: args.sourceName,
     sellSymbol: args.sell.symbol,
+    settlement: args.quote.settlement,
     slippageBps: args.quote.slippageBps,
   });
   return { body, text };
@@ -76,59 +74,67 @@ export const presentQuote = (args: {
 export const requestQuote = async (args: {
   amount: bigint;
   api: Pick<Api, "quote">;
+  buy: TokenInfo;
+  destinationChainId: number;
   exactOut: boolean;
   owner: `0x${string}`;
   recipient?: `0x${string}`;
   sell: TokenInfo;
-  buy: TokenInfo;
   slippageBps: number;
+  sourceChainId: number;
 }) =>
   args.api.quote.once.query({
+    destinationChainId: args.destinationChainId,
     intent: quoteIntent(args.exactOut, args.amount),
     owner: args.owner,
     recipient: args.recipient ?? args.owner,
     slippageBps: args.slippageBps,
+    sourceChainId: args.sourceChainId,
     tokenIn: asAddress(args.sell.address),
     tokenOut: asAddress(args.buy.address),
   });
 
+export const resolveRecipient = async (
+  api: Pick<Api, "names">,
+  recipient: string | undefined,
+  owner: `0x${string}`,
+) => {
+  if (recipient === undefined) return owner;
+  if (isAddress(recipient)) return recipient;
+  const resolved = await api.names.resolve.query({ name: recipient });
+  if (!resolved.address) throw new Error(`Could not resolve ${recipient}.`);
+  return asAddress(resolved.address);
+};
+
 export const runQuote = async (args: {
   api: Api;
+  buy: TokenInfo;
   nowMs?: number;
   owner?: `0x${string}`;
+  sell: TokenInfo;
   trade: TradeArgs;
 }) => {
-  const listed = await args.api.tokens.list.query();
-  const getByAddress = async (address: `0x${string}`) =>
-    args.api.tokens.get.query({ address });
-  const sell = await loadToken(args.trade.tokenIn, listed, getByAddress);
-  const buy = await loadToken(args.trade.tokenOut, listed, getByAddress);
-  if (sell.address.toLowerCase() === buy.address.toLowerCase()) {
-    throw new Error("Choose two different tokens.");
-  }
-  const decimals = args.trade.exactOut ? buy.decimals : sell.decimals;
+  const decimals = args.trade.exactOut ? args.buy.decimals : args.sell.decimals;
   const amount = parseHumanAmount(args.trade.amount, decimals);
   const owner = args.owner ?? INDICATIVE_OWNER;
+  const recipient = await resolveRecipient(
+    args.api,
+    args.trade.recipient,
+    owner,
+  );
   const quote = await requestQuote({
     amount,
     api: args.api,
-    buy,
+    buy: args.buy,
+    destinationChainId: args.trade.destination.id,
     exactOut: args.trade.exactOut,
     owner,
-    recipient: args.trade.recipient,
-    sell,
+    recipient,
+    sell: args.sell,
     slippageBps: args.trade.slippageBps,
+    sourceChainId: args.trade.source.id,
   });
-  return presentQuote({
-    buy,
-    indicative: args.owner === undefined,
-    nowMs: args.nowMs ?? Date.now(),
-    quote,
-    sell,
-    sellAmount: args.trade.exactOut
-      ? formatRawAmount(quote.expectedAmountIn, sell.decimals)
-      : args.trade.amount,
-  });
+  return { amount, quote, recipient };
 };
 
 export const quoteCommand = async (argv: string[]) => {
@@ -143,11 +149,52 @@ export const quoteCommand = async (argv: string[]) => {
     throw error;
   }
   const signer = await openSigner(defaultHome()).catch(() => undefined);
-  const presented = await runQuote({
-    api: createApi(trade.apiUrl),
-    owner: signer?.address,
-    trade,
-  });
-  await signer?.close?.();
-  writeOut(trade.json, presented.body, presented.text);
+  try {
+    const api = createApi(trade.apiUrl);
+    const described = await describeTrade(api, trade);
+    if (described.plan === "wrap" || described.plan === "unwrap") {
+      const text = `${trade.amount} ${described.sell.symbol} → ${trade.amount} ${described.buy.symbol}  on ${trade.source.name}\n`;
+      writeOut(
+        trade.json,
+        {
+          amount: trade.amount,
+          plan: described.plan,
+          symbol: described.sell.symbol,
+        },
+        text,
+      );
+      return;
+    }
+    const priced = await runQuote({
+      api,
+      buy: described.quotedBuy,
+      owner: signer?.address,
+      sell: described.quotedSell,
+      trade,
+    });
+    const presented = presentQuote({
+      buy:
+        described.plan === "swap-then-unwrap"
+          ? described.buy
+          : described.quotedBuy,
+      destinationName: trade.destination.name,
+      indicative: signer?.address === undefined,
+      nowMs: Date.now(),
+      quote: priced.quote,
+      sell:
+        described.plan === "wrap-then-swap"
+          ? described.sell
+          : described.quotedSell,
+      sellAmount: trade.exactOut
+        ? formatRawAmount(
+            priced.quote.expectedAmountIn,
+            described.quotedSell.decimals,
+          )
+        : trade.amount,
+      sourceName: trade.source.name,
+    });
+    writeOut(trade.json, presented.body, presented.text);
+  } finally {
+    await signer?.close?.();
+  }
 };

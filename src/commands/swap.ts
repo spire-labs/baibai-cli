@@ -1,24 +1,28 @@
 import { createApi } from "../api";
 import { HelpRequested, parseTradeArgs, type TradeArgs } from "../args";
-import { asAddress, defaultHome, WRAPPED_NATIVE_ADDRESS } from "../config";
+import { asAddress, defaultHome } from "../config";
 import { formatDuration, formatRawAmount, writeOut } from "../format";
+import { approvalSpender } from "../permit";
 import { promptConfirm } from "../prompt";
+import type { Signer } from "../signer";
 import { requireSigner } from "../signers/open";
 import { parseHumanAmount } from "../swap/amounts";
 import {
-  approvePermit2,
+  approveSpender,
   depositNative,
   readAllowance,
   readBalance,
+  waitForReceipt,
   withdrawNative,
 } from "../swap/chain";
 import { executeSwap } from "../swap/execute";
-import { nativePlan } from "../swap/native";
-import { isAddress, resolveSymbol, tokenByAddress } from "../tokens";
-import type { TokenInfo } from "../types";
-import { presentQuote, requestQuote } from "./quote";
+import { swapCompletedOutput, transferredOutput } from "../swap/receipt";
+import { describeTrade } from "../swap/trade";
+import type { TokenInfo, UserQuote } from "../types";
+import { presentQuote, requestQuote, resolveRecipient } from "./quote";
 
-const SWAP_USAGE = "Usage: baibai swap <amount> <tokenIn> <tokenOut>";
+const SWAP_USAGE =
+  "Usage: baibai swap <amount> <tokenIn> <tokenOut> [--from <network>] [--to <network>]";
 
 export const swapCommand = async (argv: string[]) => {
   let trade: ReturnType<typeof parseTradeArgs>;
@@ -32,98 +36,146 @@ export const swapCommand = async (argv: string[]) => {
     throw error;
   }
 
-  const signer = await requireSigner(defaultHome(), trade.rpcUrl);
+  const signer = await requireSigner(
+    defaultHome(),
+    trade.source.id,
+    trade.rpcUrl,
+  );
   try {
     const api = createApi(trade.apiUrl);
-    const listed = await api.tokens.list.query();
-    const load = async (input: string) => {
-      if (!isAddress(input)) return resolveSymbol(input, listed);
-      return (
-        tokenByAddress(input, listed) ??
-        api.tokens.get.query({
-          address: input.toLowerCase() as `0x${string}`,
-        })
-      );
-    };
-    const tokenIn = await load(trade.tokenIn);
-    const tokenOut = await load(trade.tokenOut);
-    const plan = nativePlan(tokenIn.address, tokenOut.address);
+    const described = await describeTrade(api, trade);
     const amount = parseHumanAmount(
       trade.amount,
-      trade.exactOut ? tokenOut.decimals : tokenIn.decimals,
+      trade.exactOut ? described.buy.decimals : described.sell.decimals,
     );
-    const recipient = trade.recipient ?? signer.address;
+    const recipient = await resolveRecipient(
+      api,
+      trade.recipient,
+      signer.address,
+    );
 
-    if (plan === "wrap" || plan === "unwrap") {
-      await requireBalance(trade, tokenIn, signer.address, amount);
+    if (described.plan === "wrap" || described.plan === "unwrap") {
+      await requireBalance(trade, described.sell, signer.address, amount);
       if (!(await accept(trade.yes))) return;
-      if (plan === "wrap") await depositNative(signer, amount, trade.rpcUrl);
-      else await withdrawNative(signer, amount, trade.rpcUrl);
+      const wrapped = wrappedAddress(trade, described.plan);
+      if (described.plan === "wrap") {
+        await depositNative(
+          signer,
+          wrapped,
+          amount,
+          trade.source.id,
+          trade.rpcUrl,
+        );
+      } else {
+        await withdrawNative(
+          signer,
+          wrapped,
+          amount,
+          trade.source.id,
+          trade.rpcUrl,
+        );
+      }
       writeOut(
         trade.json,
-        { amount: trade.amount, plan, symbol: tokenIn.symbol },
-        `${plan === "wrap" ? "Wrapped" : "Unwrapped"} ${trade.amount} ${tokenIn.symbol}.\n`,
+        {
+          amount: trade.amount,
+          plan: described.plan,
+          symbol: described.sell.symbol,
+        },
+        `${described.plan === "wrap" ? "Wrapped" : "Unwrapped"} ${trade.amount} ${described.sell.symbol}.\n`,
       );
       return;
     }
 
-    const sell = plan === "wrap-then-swap" ? wrappedToken(listed) : tokenIn;
-    const buy = plan === "swap-then-unwrap" ? wrappedToken(listed) : tokenOut;
-    if (plan !== "wrap-then-swap" && !trade.exactOut) {
+    const { buy, quotedBuy, quotedSell, sell } = described;
+    if (described.plan !== "wrap-then-swap" && !trade.exactOut) {
       await requireBalance(trade, sell, signer.address, amount);
     }
 
     const displayed = await requestQuote({
       amount,
       api,
-      buy,
+      buy: quotedBuy,
+      destinationChainId: trade.destination.id,
       exactOut: trade.exactOut,
       owner: signer.address,
       recipient,
-      sell,
+      sell: quotedSell,
       slippageBps: trade.slippageBps,
+      sourceChainId: trade.source.id,
     });
     const presented = presentQuote({
-      buy: plan === "swap-then-unwrap" ? tokenOut : buy,
+      buy: described.plan === "swap-then-unwrap" ? buy : quotedBuy,
+      destinationName: trade.destination.name,
       indicative: false,
       nowMs: Date.now(),
       quote: displayed,
-      sell: plan === "wrap-then-swap" ? tokenIn : sell,
+      sell: described.plan === "wrap-then-swap" ? sell : quotedSell,
       sellAmount: trade.exactOut
-        ? formatRawAmount(displayed.expectedAmountIn, sell.decimals)
+        ? formatRawAmount(displayed.expectedAmountIn, quotedSell.decimals)
         : trade.amount,
+      sourceName: trade.source.name,
     });
     if (!trade.json) {
       process.stderr.write(presented.text);
-      if (plan === "wrap-then-swap") {
-        process.stderr.write("ETH will be wrapped to WETH before the swap.\n");
+      if (described.plan === "wrap-then-swap") {
+        process.stderr.write(
+          `${sell.symbol} will be wrapped before the swap.\n`,
+        );
       }
-      if (plan === "swap-then-unwrap") {
-        process.stderr.write("WETH will be unwrapped to ETH after the swap.\n");
+      if (described.plan === "swap-then-unwrap") {
+        process.stderr.write(
+          `${buy.symbol} will be unwrapped after the swap.\n`,
+        );
+      }
+      if (displayed.settlement === "user") {
+        process.stderr.write("You pay gas for this swap.\n");
       }
     }
     if (!(await accept(trade.yes))) return;
 
     const inputAmount = trade.exactOut ? BigInt(displayed.maxAmountIn) : amount;
-    if (plan === "wrap-then-swap" || trade.exactOut) {
+    if (described.plan === "wrap-then-swap" || trade.exactOut) {
       await requireBalance(
         trade,
-        plan === "wrap-then-swap" ? tokenIn : sell,
+        described.plan === "wrap-then-swap" ? sell : quotedSell,
         signer.address,
         inputAmount,
       );
     }
-    if (plan === "wrap-then-swap")
-      await depositNative(signer, inputAmount, trade.rpcUrl);
+    if (described.plan === "wrap-then-swap") {
+      await depositNative(
+        signer,
+        wrappedAddress(trade, "wrap"),
+        inputAmount,
+        trade.source.id,
+        trade.rpcUrl,
+      );
+    }
 
+    const spender = approvalSpender(displayed);
     const startedAt = Date.now();
-    const order = await executeSwap({
+    const settled = await executeSwap({
       allowance: () =>
-        readAllowance(asAddress(sell.address), signer.address, trade.rpcUrl),
+        readAllowance(
+          asAddress(quotedSell.address),
+          signer.address,
+          spender,
+          trade.source.id,
+          trade.rpcUrl,
+        ),
       approve: () =>
-        approvePermit2(signer, asAddress(sell.address), trade.rpcUrl),
+        approveSpender(
+          signer,
+          asAddress(quotedSell.address),
+          spender,
+          trade.source.id,
+          trade.rpcUrl,
+        ),
       authorizedAmountIn: inputAmount,
       createOrder: (input) => api.order.create.mutate(input),
+      destinationChainId: trade.destination.id,
+      expectedSettlement: displayed.settlement,
       intent: trade.exactOut ? "exactOut" : "exactIn",
       minimumAmountOut: trade.exactOut
         ? amount
@@ -133,40 +185,41 @@ export const swapCommand = async (argv: string[]) => {
       quoteOnce: (input) => api.quote.once.query(input),
       recipient,
       requiredAllowance: inputAmount,
+      sendUserSwap: (quote) =>
+        sendUserSwap(signer, quote, trade.source.id, trade.rpcUrl),
       signer,
       skipPreflight: trade.fast,
       slippageBps: trade.slippageBps,
-      tokenIn: asAddress(sell.address),
-      tokenOut: asAddress(buy.address),
+      sourceChainId: trade.source.id,
+      tokenIn: asAddress(quotedSell.address),
+      tokenOut: asAddress(quotedBuy.address),
     });
 
-    if (plan === "swap-then-unwrap") {
-      if (!order.amountOutDelivered) {
-        throw new Error("The fill did not report an output amount to unwrap.");
-      }
+    if (described.plan === "swap-then-unwrap") {
       await withdrawNative(
         signer,
-        BigInt(order.amountOutDelivered),
+        wrappedAddress(trade, "unwrap"),
+        BigInt(settled.amountOut),
+        trade.source.id,
         trade.rpcUrl,
       );
     }
 
-    const outputToken = plan === "swap-then-unwrap" ? tokenOut : buy;
-    const inputToken = plan === "wrap-then-swap" ? tokenIn : sell;
+    const outputToken = described.plan === "swap-then-unwrap" ? buy : quotedBuy;
+    const inputToken = described.plan === "wrap-then-swap" ? sell : quotedSell;
     const filledInMs = Date.now() - startedAt;
     const result = {
-      amountIn: order.amountInSpent
-        ? formatRawAmount(order.amountInSpent, inputToken.decimals)
+      amountIn: settled.amountIn
+        ? formatRawAmount(settled.amountIn, inputToken.decimals)
         : undefined,
-      amountOut: order.amountOutDelivered
-        ? formatRawAmount(order.amountOutDelivered, outputToken.decimals)
-        : undefined,
+      amountOut: formatRawAmount(settled.amountOut, outputToken.decimals),
       filledInMs,
-      orderId: order.orderId,
-      status: order.status,
+      orderId: settled.orderId,
+      settlement: settled.settlement,
+      status: settled.status,
       tokenIn: inputToken.symbol,
       tokenOut: outputToken.symbol,
-      txHash: order.txHash,
+      txHash: settled.txHash,
     };
     writeOut(
       trade.json,
@@ -174,10 +227,13 @@ export const swapCommand = async (argv: string[]) => {
       [
         `filled in ${formatDuration(filledInMs)}`,
         `in      ${result.amountIn ?? "?"} ${result.tokenIn}`,
-        `out     ${result.amountOut ?? "?"} ${result.tokenOut}`,
+        `out     ${result.amountOut} ${result.tokenOut}`,
+        result.orderId ? `order   ${result.orderId}` : undefined,
         `tx      ${result.txHash ?? ""}`,
         "",
-      ].join("\n"),
+      ]
+        .filter((line): line is string => line !== undefined)
+        .join("\n"),
     );
   } finally {
     await signer.close?.();
@@ -186,10 +242,11 @@ export const swapCommand = async (argv: string[]) => {
 
 const accept = async (yes: boolean) => yes || promptConfirm();
 
-const wrappedToken = (tokens: TokenInfo[]) => {
-  const token = tokenByAddress(WRAPPED_NATIVE_ADDRESS, tokens);
-  if (!token) throw new Error("WETH is not in the token list.");
-  return token;
+const wrappedAddress = (trade: TradeArgs, plan: "wrap" | "unwrap") => {
+  const network = plan === "unwrap" ? trade.destination : trade.source;
+  const wrapped = network.wrappedNativeToken;
+  if (!wrapped) throw new Error(`${network.name} has no wrapped native token.`);
+  return wrapped;
 };
 
 const requireBalance = async (
@@ -199,19 +256,43 @@ const requireBalance = async (
   amount: bigint,
 ) => {
   if (trade.fast) return;
-  await ensureBalance(token, owner, amount, trade.rpcUrl);
-};
-
-const ensureBalance = async (
-  token: TokenInfo,
-  owner: `0x${string}`,
-  amount: bigint,
-  rpcUrl: string,
-) => {
-  const balance = await readBalance(asAddress(token.address), owner, rpcUrl);
+  const balance = await readBalance(
+    asAddress(token.address),
+    owner,
+    trade.source.id,
+    trade.rpcUrl,
+  );
   if (balance < amount) {
     throw new Error(
       `Insufficient ${token.symbol} balance. Have ${formatRawAmount(balance.toString(), token.decimals)}.`,
     );
   }
+};
+
+const sendUserSwap = async (
+  signer: Signer,
+  quote: UserQuote,
+  chainId: number,
+  rpcUrl: string,
+) => {
+  const transaction = quote.transactionRequest;
+  const hash = await signer.sendTransaction({
+    data: asAddress(transaction.data),
+    to: asAddress(transaction.to),
+    value: BigInt(transaction.value),
+  });
+  const receipt = await waitForReceipt(hash, chainId, rpcUrl);
+  if (receipt.status !== "success") throw new Error("Swap transaction failed.");
+  const logs = receipt.logs.map((log) => ({
+    address: log.address,
+    data: log.data,
+    topics: log.topics,
+  }));
+  return {
+    amountOut:
+      swapCompletedOutput(logs) ??
+      transferredOutput(logs, quote.tokenOut, quote.recipient) ??
+      quote.expectedAmountOut,
+    txHash: hash,
+  };
 };

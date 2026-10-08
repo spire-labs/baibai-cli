@@ -4,12 +4,13 @@ import {
   PERMIT2_ADDRESS,
   PERMIT2_PROXY_ADDRESS,
 } from "./config";
+import { BASE_KYBER_SETTLER, KYBER_ROUTER } from "./networks";
 import {
   assertQuotePermit,
   LIFI_DIAMOND_ADDRESS,
   readPermit2Signature,
 } from "./permit";
-import type { Quote } from "./types";
+import type { RelayerQuote, UserQuote } from "./types";
 
 const OWNER = "0x2222222222222222222222222222222222222222";
 const WETH = "0x4200000000000000000000000000000000000006";
@@ -75,9 +76,12 @@ const quote = (overrides?: {
   hash?: string;
   minAmountOut?: string;
   spender?: string;
-}): Quote => {
+}): RelayerQuote => {
   const typed = typedData(overrides?.spender, overrides?.hash);
   return {
+    attestation: "attest",
+    chainIdIn: BASE_CHAIN_ID,
+    chainIdOut: BASE_CHAIN_ID,
     expectedAmountIn: RAW_IN,
     expectedAmountOut: RAW_OUT,
     expiresAtMs: typed.deadline * 1000,
@@ -88,6 +92,7 @@ const quote = (overrides?: {
     priceImpactBps: 4,
     quoteId: "quote-1",
     recipient: OWNER,
+    settlement: "relayer",
     slippageBps: 100,
     tokenIn: WETH,
     tokenOut: USDC,
@@ -95,7 +100,27 @@ const quote = (overrides?: {
   };
 };
 
-const expectPermit = (value: Quote, nowMs = Date.now()) =>
+const userQuote = (to: `0x${string}`): UserQuote => {
+  const {
+    permit2TypedData: _typed,
+    settlement: _settlement,
+    venue: _venue,
+    ...rest
+  } = quote();
+  return {
+    ...rest,
+    settlement: "user",
+    transactionRequest: {
+      chainId: BASE_CHAIN_ID,
+      data: CALLDATA,
+      to,
+      value: "0",
+    },
+    venue: { lifi: { calldata: CALLDATA, step: {} } },
+  };
+};
+
+const expectPermit = (value: RelayerQuote | UserQuote, nowMs = Date.now()) =>
   assertQuotePermit({
     authorizedAmountIn: BigInt(RAW_IN),
     intent: "exactIn",
@@ -138,6 +163,65 @@ describe("assertQuotePermit", () => {
   test("rejects a quote that delivers less than the shown minimum", () => {
     expect(() => expectPermit(quote({ minAmountOut: "1" }))).toThrow(
       "The refreshed quote is worse than the quote shown.",
+    );
+  });
+
+  test("accepts a gasless Kyber quote signed against the settler", () => {
+    const value = quote();
+    const deadline = Math.floor(value.expiresAtMs / 1000);
+    expect(() =>
+      expectPermit({
+        ...value,
+        permit2TypedData: {
+          domain: value.permit2TypedData.domain,
+          message: {
+            deadline: deadline.toString(),
+            nonce: "1",
+            permitted: { amount: RAW_IN, token: WETH },
+            spender: BASE_KYBER_SETTLER,
+            witness: {
+              minAmountOut: RAW_MIN,
+              recipient: OWNER,
+              tokenOut: USDC,
+            },
+          },
+          primaryType: "PermitWitnessTransferFrom",
+          types: {
+            EIP712Domain: [
+              { name: "name", type: "string" },
+              { name: "chainId", type: "uint256" },
+              { name: "verifyingContract", type: "address" },
+            ],
+            OrderWitness: [
+              { name: "recipient", type: "address" },
+              { name: "tokenOut", type: "address" },
+              { name: "minAmountOut", type: "uint256" },
+            ],
+            PermitWitnessTransferFrom: [
+              { name: "permitted", type: "TokenPermissions" },
+              { name: "spender", type: "address" },
+              { name: "nonce", type: "uint256" },
+              { name: "deadline", type: "uint256" },
+              { name: "witness", type: "OrderWitness" },
+            ],
+            TokenPermissions: [
+              { name: "token", type: "address" },
+              { name: "amount", type: "uint256" },
+            ],
+          },
+        },
+        venue: { kyber: { routeSummary: {} } },
+      }),
+    ).not.toThrow();
+  });
+
+  test("accepts an owner-paid swap sent to the quoted router", () => {
+    expect(() => expectPermit(userQuote(LIFI_DIAMOND_ADDRESS))).not.toThrow();
+  });
+
+  test("rejects an owner-paid swap aimed at another router", () => {
+    expect(() => expectPermit(userQuote(KYBER_ROUTER))).toThrow(
+      "The backend returned an invalid swap transaction.",
     );
   });
 });

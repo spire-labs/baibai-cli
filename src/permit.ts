@@ -1,17 +1,17 @@
 import { keccak256 } from "viem";
-import {
-  BASE_CHAIN_ID,
-  PERMIT2_ADDRESS,
-  PERMIT2_PROXY_ADDRESS,
-} from "./config";
-import type { Quote } from "./types";
+import { BASE_CHAIN_ID, NATIVE_TOKEN_ADDRESS } from "./config";
+import { requireNetwork } from "./networks";
+import type { Quote, RelayerQuote, UserQuote } from "./types";
 
 export const LIFI_DIAMOND_ADDRESS =
   "0x1231DEB6f5749EF6cE6943a275A1D3E7486F4EaE";
 const MAX_QUOTE_LIFETIME_MS = 2 * 60 * 1000;
 const ERC6492_MAGIC_SUFFIX = "6492".repeat(16);
 
-const EXPECTED_TYPED_DATA_FIELDS = {
+export const SETTLEMENT_CHANGED_MESSAGE =
+  "Gas sponsorship changed for this trade. Review the updated quote and try again.";
+
+const LIFI_TYPED_DATA_FIELDS = {
   EIP712Domain: [
     { name: "name", type: "string" },
     { name: "chainId", type: "uint256" },
@@ -34,8 +34,34 @@ const EXPECTED_TYPED_DATA_FIELDS = {
   ],
 } as const;
 
+const ORDER_WITNESS_TYPED_DATA_FIELDS = {
+  EIP712Domain: [
+    { name: "name", type: "string" },
+    { name: "chainId", type: "uint256" },
+    { name: "verifyingContract", type: "address" },
+  ],
+  OrderWitness: [
+    { name: "recipient", type: "address" },
+    { name: "tokenOut", type: "address" },
+    { name: "minAmountOut", type: "uint256" },
+  ],
+  PermitWitnessTransferFrom: [
+    { name: "permitted", type: "TokenPermissions" },
+    { name: "spender", type: "address" },
+    { name: "nonce", type: "uint256" },
+    { name: "deadline", type: "uint256" },
+    { name: "witness", type: "OrderWitness" },
+  ],
+  TokenPermissions: [
+    { name: "token", type: "address" },
+    { name: "amount", type: "uint256" },
+  ],
+} as const;
+
 export type QuotePermitExpectation = {
   authorizedAmountIn: bigint;
+  destinationChainId?: number;
+  expectedSettlement?: Quote["settlement"];
   intent: "exactIn" | "exactOut";
   minimumAmountOut: bigint;
   nowMs?: number;
@@ -43,12 +69,27 @@ export type QuotePermitExpectation = {
   quote: Quote;
   recipient: string;
   slippageBps: number;
+  sourceChainId?: number;
   tokenIn: string;
   tokenOut: string;
 };
 
+export const approvalSpender = (quote: Quote): `0x${string}` => {
+  const network = requireNetwork(quote.chainIdIn);
+  if (quote.settlement !== "user") return network.permit2;
+  if ("kyber" in quote.venue) {
+    if (!network.kyberRouter) {
+      throw new Error("The backend returned an invalid swap transaction.");
+    }
+    return network.kyberRouter;
+  }
+  return network.lifiDiamond;
+};
+
 export const assertQuotePermit = ({
   authorizedAmountIn,
+  destinationChainId = BASE_CHAIN_ID,
+  expectedSettlement,
   intent,
   minimumAmountOut,
   nowMs = Date.now(),
@@ -56,6 +97,7 @@ export const assertQuotePermit = ({
   quote,
   recipient,
   slippageBps,
+  sourceChainId = BASE_CHAIN_ID,
   tokenIn,
   tokenOut,
 }: QuotePermitExpectation): void => {
@@ -65,6 +107,8 @@ export const assertQuotePermit = ({
     !sameHex(quote.tokenIn, tokenIn) ||
     !sameHex(quote.tokenOut, tokenOut) ||
     quote.slippageBps !== slippageBps ||
+    quote.chainIdIn !== sourceChainId ||
+    quote.chainIdOut !== destinationChainId ||
     quote.expiresAtMs <= nowMs ||
     quote.expiresAtMs > nowMs + MAX_QUOTE_LIFETIME_MS
   ) {
@@ -100,39 +144,122 @@ export const assertQuotePermit = ({
     throw new Error("The refreshed quote is worse than the quote shown.");
   }
 
+  if (
+    expectedSettlement !== undefined &&
+    quote.settlement !== expectedSettlement
+  ) {
+    throw new Error(SETTLEMENT_CHANGED_MESSAGE);
+  }
+
+  if (quote.settlement === "user") {
+    assertUserSwapTransaction(quote, {
+      maxAmountIn,
+      sourceChainId,
+      tokenIn,
+    });
+    return;
+  }
+
+  assertRelayerPermit(quote, {
+    maxAmountIn,
+    minAmountOut,
+    recipient,
+    sourceChainId,
+    tokenIn,
+    tokenOut,
+  });
+};
+
+const assertRelayerPermit = (
+  quote: RelayerQuote,
+  args: {
+    maxAmountIn: bigint;
+    minAmountOut: bigint;
+    recipient: string;
+    sourceChainId: number;
+    tokenIn: string;
+    tokenOut: string;
+  },
+) => {
+  const network = requireNetwork(args.sourceChainId);
   const domain = asRecord(quote.permit2TypedData.domain);
   const message = asRecord(quote.permit2TypedData.message);
   const permitted = asRecord(message?.permitted);
   const witness = asRecord(message?.witness);
-  const calldata = quote.venue.lifi.calldata;
-  if (
-    !hasExactKeys(domain, ["chainId", "name", "verifyingContract"]) ||
-    !hasExactKeys(message, [
+  const sharedValid =
+    hasExactKeys(domain, ["chainId", "name", "verifyingContract"]) &&
+    hasExactKeys(message, [
       "deadline",
       "nonce",
       "permitted",
       "spender",
       "witness",
-    ]) ||
-    !hasExactKeys(permitted, ["amount", "token"]) ||
-    !hasExactKeys(witness, ["diamondAddress", "diamondCalldataHash"]) ||
-    !hasExpectedTypedDataFields(quote.permit2TypedData.types) ||
-    quote.permit2TypedData.primaryType !== "PermitWitnessTransferFrom" ||
-    domain?.name !== "Permit2" ||
-    asBigInt(domain?.chainId) !== BigInt(BASE_CHAIN_ID) ||
-    !sameHex(domain?.verifyingContract, PERMIT2_ADDRESS) ||
-    !sameHex(message?.spender, PERMIT2_PROXY_ADDRESS) ||
-    !sameHex(permitted?.token, tokenIn) ||
-    asBigInt(permitted?.amount) !== maxAmountIn ||
-    (asBigInt(message?.nonce) ?? -1n) < 0n ||
-    !sameHex(witness?.diamondAddress, LIFI_DIAMOND_ADDRESS) ||
-    !sameHex(
-      witness?.diamondCalldataHash,
-      keccak256(calldata as `0x${string}`),
-    ) ||
-    asBigInt(message?.deadline) !== BigInt(Math.floor(quote.expiresAtMs / 1000))
-  ) {
+    ]) &&
+    hasExactKeys(permitted, ["amount", "token"]) &&
+    quote.permit2TypedData.primaryType === "PermitWitnessTransferFrom" &&
+    domain?.name === "Permit2" &&
+    asBigInt(domain?.chainId) === BigInt(args.sourceChainId) &&
+    sameHex(domain?.verifyingContract, network.permit2) &&
+    sameHex(permitted?.token, args.tokenIn) &&
+    asBigInt(permitted?.amount) === args.maxAmountIn &&
+    (asBigInt(message?.nonce) ?? -1n) >= 0n &&
+    asBigInt(message?.deadline) ===
+      BigInt(Math.floor(quote.expiresAtMs / 1000));
+
+  const venueValid =
+    "kyber" in quote.venue
+      ? network.kyberSettler !== undefined &&
+        hasExactKeys(witness, ["recipient", "tokenOut", "minAmountOut"]) &&
+        hasExpectedTypedDataFields(
+          quote.permit2TypedData.types,
+          ORDER_WITNESS_TYPED_DATA_FIELDS,
+        ) &&
+        sameHex(message?.spender, network.kyberSettler) &&
+        sameHex(witness?.recipient, args.recipient) &&
+        sameHex(witness?.tokenOut, args.tokenOut) &&
+        asBigInt(witness?.minAmountOut) === args.minAmountOut
+      : hasExactKeys(witness, ["diamondAddress", "diamondCalldataHash"]) &&
+        hasExpectedTypedDataFields(
+          quote.permit2TypedData.types,
+          LIFI_TYPED_DATA_FIELDS,
+        ) &&
+        sameHex(message?.spender, network.permit2Proxy) &&
+        sameHex(witness?.diamondAddress, network.lifiDiamond) &&
+        sameHex(
+          witness?.diamondCalldataHash,
+          keccak256(quote.venue.lifi.calldata as `0x${string}`),
+        );
+
+  if (!sharedValid || !venueValid) {
     throw new Error("The backend returned an invalid Permit2 quote.");
+  }
+};
+
+const assertUserSwapTransaction = (
+  quote: UserQuote,
+  args: {
+    maxAmountIn: bigint;
+    sourceChainId: number;
+    tokenIn: string;
+  },
+) => {
+  const network = requireNetwork(args.sourceChainId);
+  const venue =
+    "kyber" in quote.venue
+      ? { calldata: quote.venue.kyber.calldata, router: network.kyberRouter }
+      : { calldata: quote.venue.lifi.calldata, router: network.lifiDiamond };
+  const transaction = quote.transactionRequest;
+  const value = asBigInt(transaction.value);
+  const nativeIn = sameHex(args.tokenIn, NATIVE_TOKEN_ADDRESS);
+  if (
+    venue.router === undefined ||
+    transaction.chainId !== args.sourceChainId ||
+    !sameHex(transaction.to, venue.router) ||
+    transaction.data.toLowerCase() !== venue.calldata.toLowerCase() ||
+    value === null ||
+    (nativeIn ? value !== args.maxAmountIn : value !== 0n)
+  ) {
+    throw new Error("The backend returned an invalid swap transaction.");
   }
 };
 
@@ -181,13 +308,19 @@ const hasExactKeys = (
   );
 };
 
-const hasExpectedTypedDataFields = (value: unknown) => {
+const hasExpectedTypedDataFields = (
+  value: unknown,
+  expectedFieldsByType: Record<
+    string,
+    ReadonlyArray<{ name: string; type: string }>
+  >,
+) => {
   const types = asRecord(value);
-  if (!types || !hasExactKeys(types, Object.keys(EXPECTED_TYPED_DATA_FIELDS))) {
+  if (!types || !hasExactKeys(types, Object.keys(expectedFieldsByType))) {
     return false;
   }
 
-  return Object.entries(EXPECTED_TYPED_DATA_FIELDS).every(
+  return Object.entries(expectedFieldsByType).every(
     ([typeName, expectedFields]) => {
       const fields = types[typeName];
       return (

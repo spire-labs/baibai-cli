@@ -11,7 +11,9 @@ describe("tokens.list", () => {
       return Response.json({ result: { data: [] } });
     }) as typeof fetch;
     try {
-      await createApi("https://app.example/v1/trpc").tokens.list.query();
+      await createApi("https://app.example/v1/trpc").tokens.list.query({
+        chainId: BASE_CHAIN_ID,
+      });
     } finally {
       globalThis.fetch = original;
     }

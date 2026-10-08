@@ -23,6 +23,7 @@ export const formatPercentFromBps = (slippageBps: number) => {
 
 export const formatQuoteText = (args: {
   buyAmount: string;
+  buyChain: string;
   buySymbol: string;
   expiresAtMs: number;
   indicative: boolean;
@@ -30,18 +31,25 @@ export const formatQuoteText = (args: {
   nowMs: number;
   priceImpactBps: number;
   sellAmount: string;
+  sellChain: string;
   sellSymbol: string;
+  settlement: "relayer" | "user";
   slippageBps: number;
 }) => {
   const expires = Math.max(
     0,
     Math.round((args.expiresAtMs - args.nowMs) / 1000),
   );
+  const route =
+    args.sellChain === args.buyChain
+      ? `on ${args.sellChain}`
+      : `${args.sellChain} → ${args.buyChain}`;
   const lines = [
-    `${args.sellAmount} ${args.sellSymbol} → ${args.buyAmount} ${args.buySymbol}`,
+    `${args.sellAmount} ${args.sellSymbol} → ${args.buyAmount} ${args.buySymbol}  ${route}`,
     `min received   ${args.minAmount} ${args.buySymbol}`,
     `price impact   ${args.priceImpactBps} bps`,
     `slippage       ${formatPercentFromBps(args.slippageBps)}`,
+    `settlement     ${args.settlement}`,
     `expires        ${expires}s`,
   ];
   if (args.indicative) {

@@ -1,14 +1,19 @@
 import { homedir } from "node:os";
 import { join } from "node:path";
 import packageJson from "../package.json" with { type: "json" };
+import {
+  BASE_CHAIN_ID,
+  defaultNetwork,
+  LIFI_PERMIT2_PROXY,
+  PERMIT2,
+  requireNetwork,
+} from "./networks";
 
-export const BASE_CHAIN_ID = 8453;
-export const PERMIT2_ADDRESS =
-  "0x000000000022D473030F116dDEE9F6B43aC78BA3" as const;
-export const PERMIT2_PROXY_ADDRESS =
-  "0x89c6340B1a1f4b25D36cd8B063D49045caF3f818" as const;
-export const WRAPPED_NATIVE_ADDRESS =
-  "0x4200000000000000000000000000000000000006" as const;
+export { BASE_CHAIN_ID };
+export const PERMIT2_ADDRESS = PERMIT2;
+export const PERMIT2_PROXY_ADDRESS = LIFI_PERMIT2_PROXY;
+export const WRAPPED_NATIVE_ADDRESS = defaultNetwork()
+  .wrappedNativeToken as `0x${string}`;
 
 export const VERSION = packageJson.version;
 export const NATIVE_TOKEN_ADDRESS =
@@ -16,7 +21,7 @@ export const NATIVE_TOKEN_ADDRESS =
 export const INDICATIVE_OWNER =
   "0x0000000000000000000000000000000000000001" as const;
 export const DEFAULT_API_URL = "https://app.baibai.cx/v1/trpc";
-export const DEFAULT_RPC_URL = "https://mainnet.base.org";
+export const DEFAULT_RPC_URL = defaultNetwork().rpcUrl;
 export const DEFAULT_SLIPPAGE_BPS = 100;
 export const ORDER_POLL_INTERVAL_MS = 200;
 export const ORDER_POLL_TIMEOUT_MS = 2 * 60 * 1000;
@@ -33,12 +38,21 @@ export const resolveApiUrl = (flag: string | undefined) => {
   return url;
 };
 
-export const resolveRpcUrl = (flag: string | undefined) => {
-  const url = flag ?? process.env.RPC_URL ?? DEFAULT_RPC_URL;
-  if (url.trim().length === 0) {
-    throw new Error("RPC URL is empty.");
+export const resolveRpcUrl = (
+  flag: string | undefined,
+  chainId: number = BASE_CHAIN_ID,
+) => {
+  if (flag !== undefined) {
+    const url = flag.trim();
+    if (url.length === 0) throw new Error("RPC URL is empty.");
+    return url;
   }
-  return url;
+  if (chainId === BASE_CHAIN_ID && process.env.RPC_URL !== undefined) {
+    const url = process.env.RPC_URL.trim();
+    if (url.length === 0) throw new Error("RPC URL is empty.");
+    return url;
+  }
+  return requireNetwork(chainId).rpcUrl;
 };
 
 export const parseSlippageBps = (value: string | undefined) => {
