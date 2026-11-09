@@ -10,7 +10,7 @@ import {
   LIFI_DIAMOND_ADDRESS,
   readPermit2Signature,
 } from "./permit";
-import type { RelayerQuote, UserQuote } from "./types";
+import type { MessageQuote, RelayerQuote, UserQuote } from "./types";
 
 const OWNER = "0x2222222222222222222222222222222222222222";
 const WETH = "0x4200000000000000000000000000000000000006";
@@ -213,6 +213,121 @@ describe("assertQuotePermit", () => {
         venue: { kyber: { routeSummary: {} } },
       }),
     ).not.toThrow();
+  });
+
+  test("accepts a withdrawal inside its longer lifetime", () => {
+    const now = 1_700_000_000_000;
+    const withdrawal: MessageQuote = {
+      attestation: "attest",
+      chainIdIn: BASE_CHAIN_ID,
+      chainIdOut: BASE_CHAIN_ID,
+      expectedAmountIn: RAW_IN,
+      expectedAmountOut: RAW_OUT,
+      expiresAtMs: now + 180_000,
+      maxAmountIn: RAW_IN,
+      minAmountOut: RAW_MIN,
+      owner: OWNER,
+      priceImpactBps: 0,
+      quoteId: "quote-1",
+      recipient: OWNER,
+      settlement: "message",
+      slippageBps: 100,
+      tokenIn: WETH,
+      tokenOut: USDC,
+      typedData: [
+        {
+          domain: { name: "HyperliquidSignTransaction" },
+          message: {
+            amount: "1",
+            destination: OWNER,
+            hyperliquidChain: "Mainnet",
+          },
+          primaryType: "HyperliquidTransaction:Withdraw",
+          types: {},
+        },
+      ],
+      venue: { lifi: {} },
+    };
+    expect(() =>
+      assertQuotePermit({
+        authorizedAmountIn: BigInt(RAW_IN),
+        intent: "exactIn",
+        minimumAmountOut: BigInt(RAW_MIN),
+        nowMs: now,
+        owner: OWNER,
+        quote: withdrawal,
+        recipient: OWNER,
+        sellTokenDecimals: 18,
+        slippageBps: 100,
+        tokenIn: WETH,
+        tokenOut: USDC,
+      }),
+    ).not.toThrow();
+    expect(() =>
+      assertQuotePermit({
+        authorizedAmountIn: BigInt(RAW_IN),
+        intent: "exactIn",
+        minimumAmountOut: BigInt(RAW_MIN),
+        nowMs: now,
+        owner: OWNER,
+        quote: { ...withdrawal, expiresAtMs: now + 241_000 },
+        recipient: OWNER,
+        sellTokenDecimals: 18,
+        slippageBps: 100,
+        tokenIn: WETH,
+        tokenOut: USDC,
+      }),
+    ).toThrow("The refreshed quote no longer matches this trade.");
+  });
+
+  test("rejects a withdrawal that signs anything except the USDC move", () => {
+    const now = Date.now();
+    const withdrawal: MessageQuote = {
+      attestation: "attest",
+      chainIdIn: BASE_CHAIN_ID,
+      chainIdOut: BASE_CHAIN_ID,
+      expectedAmountIn: RAW_IN,
+      expectedAmountOut: RAW_OUT,
+      expiresAtMs: now + 60_000,
+      maxAmountIn: RAW_IN,
+      minAmountOut: RAW_MIN,
+      owner: OWNER,
+      priceImpactBps: 0,
+      quoteId: "quote-1",
+      recipient: OWNER,
+      settlement: "message",
+      slippageBps: 100,
+      tokenIn: WETH,
+      tokenOut: USDC,
+      typedData: [
+        {
+          domain: { name: "HyperliquidSignTransaction" },
+          message: {
+            amount: "1",
+            destination: "0x3333333333333333333333333333333333333333",
+            hyperliquidChain: "Mainnet",
+          },
+          primaryType: "HyperliquidTransaction:Withdraw",
+          types: {},
+        },
+      ],
+      venue: { lifi: {} },
+    };
+    expect(() =>
+      assertQuotePermit({
+        authorizedAmountIn: BigInt(RAW_IN),
+        intent: "exactIn",
+        minimumAmountOut: BigInt(RAW_MIN),
+        nowMs: now,
+        owner: OWNER,
+        quote: withdrawal,
+        recipient: OWNER,
+        sellTokenDecimals: 18,
+        slippageBps: 100,
+        tokenIn: WETH,
+        tokenOut: USDC,
+      }),
+    ).toThrow("The backend returned an invalid withdrawal to sign.");
   });
 
   test("accepts an owner-paid swap sent to the quoted router", () => {

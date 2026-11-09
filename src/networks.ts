@@ -6,13 +6,11 @@ import {
   avalanche,
   base,
   berachain,
-  blast,
   bsc,
   celo,
   gnosis,
   hyperEvm,
   ink,
-  lens,
   linea,
   mainnet,
   monad,
@@ -45,6 +43,13 @@ export const KYBER_ROUTER =
   "0x6131B5fae19EA4f9D964eAc0408E4408b66337b5" as const;
 export const BASE_KYBER_SETTLER =
   "0xbf8E65Fe0711F6B2424372A65070b7A4F2B26567" as const;
+export const ROBINHOOD_KYBER_SETTLER =
+  "0x551f25E294f9dAE56463A62DBcfd063cA8785B83" as const;
+export const HYPERCORE_CHAIN_ID = 1337;
+export const HYPERCORE_PERPS_USDC =
+  "0xaf88d065e77c8cc2239327c5edb3a432268e5831" as const;
+export const HYPERCORE_SPOT_USDC =
+  "0x6d1e7cde53ba9467b783cb7c530ce05400000000" as const;
 
 const LIFI_DIAMOND_BY_CHAIN: Partial<Record<number, `0x${string}`>> = {
   130: "0x864b314D4C5a0399368609581d3E8933a63b9232",
@@ -95,7 +100,7 @@ export type Network = {
   nativeSymbol: string;
   permit2: `0x${string}`;
   permit2Proxy: `0x${string}`;
-  rpcUrl: string;
+  rpcUrl?: string;
   slug: string;
   wrappedNativeToken: `0x${string}` | null;
 };
@@ -108,8 +113,8 @@ type NetworkSpec = {
   nativeErc20?: `0x${string}`;
   nativeSymbol: string;
   permit2?: `0x${string}`;
-  rpcUrl: string;
-  settler?: boolean;
+  rpcUrl?: string;
+  settler?: `0x${string}`;
   slug: string;
   wrappedNativeToken: `0x${string}` | null;
 };
@@ -118,7 +123,7 @@ const spec = (value: NetworkSpec): Network => ({
   aliases: value.aliases ?? [],
   id: value.id,
   kyberRouter: value.kyber ? KYBER_ROUTER : undefined,
-  kyberSettler: value.settler ? BASE_KYBER_SETTLER : undefined,
+  kyberSettler: value.settler,
   lifiDiamond: lifiDiamondForChain(value.id),
   name: value.name,
   nativeDecimals: 18,
@@ -151,7 +156,7 @@ export const NETWORKS: readonly Network[] = [
     name: "Base",
     nativeSymbol: "ETH",
     rpcUrl: "https://mainnet.base.org",
-    settler: true,
+    settler: BASE_KYBER_SETTLER,
     slug: "base",
     wrappedNativeToken: WETH,
   }),
@@ -162,6 +167,7 @@ export const NETWORKS: readonly Network[] = [
     name: "Robinhood Chain",
     nativeSymbol: "ETH",
     rpcUrl: "https://rpc.mainnet.chain.robinhood.com",
+    settler: ROBINHOOD_KYBER_SETTLER,
     slug: "robinhood-chain",
     wrappedNativeToken: "0x0Bd7D308f8E1639FAb988df18A8011f41EAcAD73",
   }),
@@ -174,6 +180,14 @@ export const NETWORKS: readonly Network[] = [
     rpcUrl: "https://rpc.hyperliquid.xyz/evm",
     slug: "hyperevm",
     wrappedNativeToken: "0x5555555555555555555555555555555555555555",
+  }),
+  spec({
+    aliases: ["hypercore", "hl-core"],
+    id: HYPERCORE_CHAIN_ID,
+    name: "HyperCore",
+    nativeSymbol: "USDC",
+    slug: "hypercore",
+    wrappedNativeToken: null,
   }),
   spec({
     aliases: [
@@ -289,14 +303,6 @@ export const NETWORKS: readonly Network[] = [
     wrappedNativeToken: "0x5AEa5775959fBC2557Cc8789bC1bf90A239D9a91",
   }),
   spec({
-    id: 81457,
-    name: "Blast",
-    nativeSymbol: "ETH",
-    rpcUrl: "https://rpc.blast.io",
-    slug: "blast",
-    wrappedNativeToken: "0x4300000000000000000000000000000000000004",
-  }),
-  spec({
     aliases: ["xdai", "gno"],
     id: 100,
     name: "Gnosis",
@@ -379,15 +385,6 @@ export const NETWORKS: readonly Network[] = [
     slug: "rootstock",
     wrappedNativeToken: "0x542fDA317318eBF1d3DEAf76E0b632741A7e677d",
   }),
-  spec({
-    id: 232,
-    name: "Lens",
-    nativeSymbol: "GHO",
-    permit2: ZKSYNC_PERMIT2,
-    rpcUrl: "https://api.lens.matterhosted.dev",
-    slug: "lens",
-    wrappedNativeToken: "0x6bDc36E20D267Ff0dd6097799f82e78907105e2F",
-  }),
 ];
 
 const networksById = new Map(NETWORKS.map((network) => [network.id, network]));
@@ -408,7 +405,6 @@ const viemChains = [
   linea,
   scroll,
   zkSync,
-  blast,
   gnosis,
   worldchain,
   ink,
@@ -418,7 +414,6 @@ const viemChains = [
   soneium,
   apeChain,
   rootstock,
-  lens,
 ] as const;
 
 const viemChainById = new Map<number, Chain>(
@@ -456,16 +451,20 @@ export const resolveNetwork = (input: string): Network => {
 
 export const chainFor = (network: Network, rpcUrl: string): Chain => {
   const viemChain = viemChainById.get(network.id);
-  if (!viemChain) throw new Error(`Chain ${network.id} is not supported.`);
+  const nativeCurrency = {
+    decimals: network.nativeDecimals,
+    name: network.nativeSymbol,
+    symbol: network.nativeSymbol,
+  };
   return defineChain({
-    ...viemChain,
+    ...(viemChain ?? {
+      id: network.id,
+      name: network.name,
+      nativeCurrency,
+    }),
     id: network.id,
     name: network.name,
-    nativeCurrency: {
-      decimals: network.nativeDecimals,
-      name: network.nativeSymbol,
-      symbol: network.nativeSymbol,
-    },
+    nativeCurrency,
     rpcUrls: { default: { http: [rpcUrl] } },
   });
 };

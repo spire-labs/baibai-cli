@@ -20,16 +20,19 @@ export const gainsCommand = async (argv: string[]) => {
   if (parsed.positionals.length > 0) throw new Error(USAGE);
   const signer = await requireSigner(defaultHome());
   try {
-    const gains = await createApi(parsed.apiUrl).order.gainsByOwner.query({
-      owner: signer.address,
-    });
+    const api = createApi(parsed.apiUrl);
+    const [gains, stocks] = await Promise.all([
+      api.order.gainsByOwner.query({ owner: signer.address }),
+      api.order.stockPurchasesByOwner.query({ owner: signer.address }),
+    ]);
     writeOut(
       parsed.json,
-      gains,
+      { ...gains, stockPurchasesUsd: stocks.totalUsd },
       [
         `gain     $${gains.totalGainUsd}`,
         `trades   ${gains.totalGainCount}`,
         `filled   ${gains.filledTrades}`,
+        `stocks   $${stocks.totalUsd}`,
         "",
       ].join("\n"),
     );

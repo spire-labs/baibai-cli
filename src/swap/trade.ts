@@ -1,6 +1,6 @@
 import type { Api } from "../api";
 import type { TradeArgs } from "../args";
-import { loadToken, loadWrappedNative } from "../tokens";
+import { listNetworkTokens, loadToken, loadWrappedNative } from "../tokens";
 import type { TokenInfo } from "../types";
 import { nativePlan, resolveSwapTokens } from "./native";
 
@@ -11,11 +11,11 @@ export const describeTrade = async (
   api: Pick<Api, "tokens">,
   trade: TradeArgs,
 ) => {
-  const sourceList = await api.tokens.list.query({ chainId: trade.source.id });
+  const sourceList = await listNetworkTokens(api, trade.source);
   const destinationList =
     trade.destination.id === trade.source.id
       ? sourceList
-      : await api.tokens.list.query({ chainId: trade.destination.id });
+      : await listNetworkTokens(api, trade.destination);
   const sell = await loadToken(api, trade.source, trade.tokenIn, sourceList);
   const buy = await loadToken(
     api,

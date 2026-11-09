@@ -6,10 +6,13 @@ import type {
   OrderPage,
   PointsLeaderboard,
   PointsProgramConfig,
+  PointsScan,
   PointsSummary,
   Portfolio,
   Quote,
+  QuoteCompetitors,
   QuoteRequest,
+  StockPurchases,
   TokenDetails,
   TokenInfo,
   TokenPrice,
@@ -40,11 +43,23 @@ export type Api = {
         quote: Quote;
       }) => Promise<Order>;
     };
+    createSigned: {
+      mutate: (input: {
+        quote: Quote;
+        signatures: Address[];
+      }) => Promise<Order>;
+    };
     gainsByOwner: {
       query: (input: { owner: Address }) => Promise<GainStats>;
     };
+    recordUserPaid: {
+      mutate: (input: { quote: Quote; txHash: Address }) => Promise<Order>;
+    };
     status: {
       query: (input: { orderId: string }) => Promise<Order>;
+    };
+    stockPurchasesByOwner: {
+      query: (input: { owner: Address }) => Promise<StockPurchases>;
     };
   };
   points: {
@@ -53,6 +68,14 @@ export type Api = {
         deadlineMs: number;
         owner: Address;
         referrerUsername: string;
+        signature: Address;
+      }) => Promise<null>;
+    };
+    commitGoal: {
+      mutate: (input: {
+        deadlineMs: number;
+        goalUsd: number;
+        owner: Address;
         signature: Address;
       }) => Promise<null>;
     };
@@ -72,6 +95,9 @@ export type Api = {
     programConfig: {
       query: () => Promise<PointsProgramConfig>;
     };
+    scan: {
+      mutate: (input: { owner: Address }) => Promise<PointsScan>;
+    };
     summary: {
       query: (input: { owner: Address }) => Promise<PointsSummary>;
     };
@@ -85,6 +111,16 @@ export type Api = {
     };
   };
   quote: {
+    competitors: {
+      query: (input: {
+        amountIn: string;
+        destinationChainId: number;
+        owner: Address;
+        sourceChainId: number;
+        tokenIn: Address;
+        tokenOut: Address;
+      }) => Promise<QuoteCompetitors>;
+    };
     once: { query: (input: QuoteRequest) => Promise<Quote> };
   };
   tokens: {
@@ -154,14 +190,27 @@ export const createApi = (url: string): Api => ({
     create: {
       mutate: (input) => call(url, "order.create", "mutation", input),
     },
+    createSigned: {
+      mutate: (input) => call(url, "order.createSigned", "mutation", input),
+    },
     gainsByOwner: {
       query: (input) => call(url, "order.gainsByOwner", "query", input),
     },
+    recordUserPaid: {
+      mutate: (input) => call(url, "order.recordUserPaid", "mutation", input),
+    },
     status: { query: (input) => call(url, "order.status", "query", input) },
+    stockPurchasesByOwner: {
+      query: (input) =>
+        call(url, "order.stockPurchasesByOwner", "query", input),
+    },
   },
   points: {
     bindReferral: {
       mutate: (input) => call(url, "points.bindReferral", "mutation", input),
+    },
+    commitGoal: {
+      mutate: (input) => call(url, "points.commitGoal", "mutation", input),
     },
     createReferralUsername: {
       mutate: (input) =>
@@ -173,6 +222,9 @@ export const createApi = (url: string): Api => ({
     programConfig: {
       query: () => call(url, "points.programConfig", "query"),
     },
+    scan: {
+      mutate: (input) => call(url, "points.scan", "mutation", input),
+    },
     summary: {
       query: (input) => call(url, "points.summary", "query", input),
     },
@@ -182,6 +234,9 @@ export const createApi = (url: string): Api => ({
     },
   },
   quote: {
+    competitors: {
+      query: (input) => call(url, "quote.competitors", "query", input),
+    },
     once: { query: (input) => call(url, "quote.once", "query", input) },
   },
   tokens: {

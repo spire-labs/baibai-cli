@@ -60,6 +60,27 @@ export const createReferralUsernameTypedData = (message: {
     },
   );
 
+export const commitGoalTypedData = (message: {
+  deadlineMs: number;
+  goalUsd: number;
+  owner: string;
+}) =>
+  typedData(
+    "CommitGoal",
+    {
+      CommitGoal: [
+        { name: "owner", type: "address" },
+        { name: "goalUsd", type: "uint256" },
+        { name: "deadline", type: "uint256" },
+      ],
+    },
+    {
+      deadline: BigInt(message.deadlineMs),
+      goalUsd: BigInt(message.goalUsd),
+      owner: message.owner,
+    },
+  );
+
 export const updateReferralUsernameTypedData = (message: {
   deadlineMs: number;
   owner: string;

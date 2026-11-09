@@ -1,3 +1,4 @@
+import { accumulateCommand } from "./commands/accumulate";
 import { balanceCommand } from "./commands/balance";
 import { gainsCommand } from "./commands/gains";
 import { nameCommand } from "./commands/name";
@@ -13,6 +14,7 @@ const HELP = `baibai — trade on the networks the app supports
 
   baibai quote <amount> <tokenIn> <tokenOut>
   baibai swap <amount> <tokenIn> <tokenOut>
+  baibai accumulate [--amount <cap>]
   baibai wallet import
   baibai wallet status
   baibai wallet disconnect
@@ -27,11 +29,14 @@ const HELP = `baibai — trade on the networks the app supports
   baibai name <ens-or-address>
   baibai points
   baibai points leaderboard
+  baibai points scan
+  baibai points commit <usd>
   baibai points referral
   baibai points referral bind <username>
   baibai points referral rename <username>
 
 Flags
+  --amount <cap>         max tokens sold on each accumulate swap
   --from <network>       network of tokenIn, default base
   --to <network>         network of tokenOut, default the source network
   --slippage <percent>   default 1
@@ -47,7 +52,7 @@ Flags
   --api <url>            default https://app.baibai.cx/v1/trpc
   --rpc <url>            RPC for the network the command writes to
 
-A token may name its network: arb:usdc, eth:0x…. Omitting --to keeps the trade on one network. Base is the default. A relayer quote is submitted for you. A user quote is approved and broadcast by this key.
+A token may name its network: arb:usdc, eth:0x…, hypercore:usdc. Omitting --to keeps the trade on one network. Base is the default. A relayer quote is submitted for you. A user quote is approved and broadcast by this key, then recorded. A message quote withdraws from HyperCore: each message is signed and submitted. On HyperCore, usdc is the perps balance and spot is the spot balance. baibai accumulate swaps USDC and USDT when a gasless quote guarantees a larger minimum output, and repeats until interrupted.
 `;
 
 const main = async () => {
@@ -68,6 +73,7 @@ const main = async () => {
   }
   if (command === "quote") return quoteCommand(rest);
   if (command === "swap") return swapCommand(rest);
+  if (command === "accumulate") return accumulateCommand(rest);
   if (command === "wallet") return walletCommand(rest);
   if (command === "orders") return ordersCommand(rest);
   if (command === "order") return orderCommand(rest);

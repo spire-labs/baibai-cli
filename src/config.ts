@@ -21,7 +21,14 @@ export const NATIVE_TOKEN_ADDRESS =
 export const INDICATIVE_OWNER =
   "0x0000000000000000000000000000000000000001" as const;
 export const DEFAULT_API_URL = "https://app.baibai.cx/v1/trpc";
-export const DEFAULT_RPC_URL = defaultNetwork().rpcUrl;
+
+const baseRpcUrl = () => {
+  const rpcUrl = defaultNetwork().rpcUrl;
+  if (rpcUrl === undefined) throw new Error("Base has no RPC.");
+  return rpcUrl;
+};
+
+export const DEFAULT_RPC_URL = baseRpcUrl();
 export const DEFAULT_SLIPPAGE_BPS = 100;
 export const ORDER_POLL_INTERVAL_MS = 200;
 export const ORDER_POLL_TIMEOUT_MS = 2 * 60 * 1000;
@@ -52,7 +59,11 @@ export const resolveRpcUrl = (
     if (url.length === 0) throw new Error("RPC URL is empty.");
     return url;
   }
-  return requireNetwork(chainId).rpcUrl;
+  const network = requireNetwork(chainId);
+  if (network.rpcUrl === undefined) {
+    throw new Error(`${network.name} has no RPC.`);
+  }
+  return network.rpcUrl;
 };
 
 export const parseSlippageBps = (value: string | undefined) => {

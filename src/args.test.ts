@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { parseTradeArgs } from "./args";
+import type { Api } from "./api";
+import { parseAccumulateArgs, parseTradeArgs } from "./args";
 import {
   BASE_CHAIN_ID,
   DEFAULT_RPC_URL,
@@ -7,11 +8,11 @@ import {
   resolveRpcUrl,
 } from "./config";
 import { formatDuration, formatRawAmount } from "./format";
-import { requireNetwork } from "./networks";
+import { requireNetwork, resolveNetwork } from "./networks";
 import { accepted } from "./prompt";
 import { parseHumanAmount } from "./swap/amounts";
 import { nativePlan, resolveSwapTokens } from "./swap/native";
-import { resolveSymbol, tokenByAddress } from "./tokens";
+import { loadToken, resolveSymbol, tokenByAddress } from "./tokens";
 import type { TokenInfo } from "./types";
 
 const USDC: TokenInfo = {
@@ -99,6 +100,32 @@ describe("parseTradeArgs", () => {
   });
 });
 
+describe("parseAccumulateArgs", () => {
+  test("defaults to the whole balance on the default network", () => {
+    expect(parseAccumulateArgs([], "usage")).toMatchObject({
+      amount: undefined,
+      json: false,
+      network: { id: BASE_CHAIN_ID },
+    });
+  });
+
+  test("parses a cap and a network", () => {
+    expect(
+      parseAccumulateArgs(["--amount", "1000", "--from", "arbitrum"], "usage"),
+    ).toMatchObject({
+      amount: "1000",
+      network: { id: 42161 },
+    });
+  });
+
+  test("rejects an empty cap and extra words", () => {
+    expect(() => parseAccumulateArgs(["--amount", "0"], "usage")).toThrow(
+      "Amount must be greater than zero.",
+    );
+    expect(() => parseAccumulateArgs(["usdc"], "usage")).toThrow("usage");
+  });
+});
+
 describe("resolveRpcUrl", () => {
   test("prefers the flag, then the environment, then the default", () => {
     const previous = process.env.RPC_URL;
@@ -124,6 +151,9 @@ describe("resolveRpcUrl", () => {
     process.env.RPC_URL = "https://base.example";
     try {
       const arbitrum = requireNetwork(42161);
+      if (arbitrum.rpcUrl === undefined) {
+        throw new Error("Arbitrum has no RPC.");
+      }
       expect(resolveRpcUrl(undefined, arbitrum.id)).toBe(arbitrum.rpcUrl);
       expect(resolveRpcUrl("https://flag.example", arbitrum.id)).toBe(
         "https://flag.example",
@@ -227,6 +257,36 @@ describe("parseTradeArgs chains", () => {
       tokenIn: "usdc",
       tokenOut: "weth",
     });
+  });
+
+  test("resolves hypercore balances without asking the token list", async () => {
+    const api = {
+      tokens: {
+        get: { query: async () => Promise.reject(new Error("get")) },
+        list: { query: async () => Promise.reject(new Error("list")) },
+      },
+    } as unknown as Pick<Api, "tokens">;
+    const network = resolveNetwork("hypercore");
+    expect((await loadToken(api, network, "usdc")).decimals).toBe(6);
+    expect((await loadToken(api, network, "spot")).decimals).toBe(8);
+    expect((await loadToken(api, network, "perps")).address.toLowerCase()).toBe(
+      "0xaf88d065e77c8cc2239327c5edb3a432268e5831",
+    );
+  });
+
+  test("quotes hypercore without an rpc", () => {
+    expect(
+      parseTradeArgs(
+        ["10", "usdc", "usdc", "--from", "hypercore", "--to", "base"],
+        "usage",
+      ).rpcUrl,
+    ).toBeUndefined();
+    expect(() =>
+      parseTradeArgs(
+        ["10", "usdc", "usdc", "--from", "hypercore", "--rpc", "https://rpc"],
+        "usage",
+      ),
+    ).toThrow("HyperCore has no RPC.");
   });
 
   test("keeps a trade on the source network unless --to is set", () => {

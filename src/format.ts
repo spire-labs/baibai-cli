@@ -33,8 +33,12 @@ export const formatQuoteText = (args: {
   sellAmount: string;
   sellChain: string;
   sellSymbol: string;
-  settlement: "relayer" | "user";
+  settlement: "relayer" | "user" | "message";
   slippageBps: number;
+  bridgeMs?: number;
+  competitor?: string;
+  gasFeeUsd?: string;
+  sponsorMinimumUsd?: number;
 }) => {
   const expires = Math.max(
     0,
@@ -52,6 +56,18 @@ export const formatQuoteText = (args: {
     `settlement     ${args.settlement}`,
     `expires        ${expires}s`,
   ];
+  if (args.gasFeeUsd !== undefined) {
+    lines.push(`gas            $${args.gasFeeUsd}`);
+  }
+  if (args.sponsorMinimumUsd !== undefined) {
+    lines.push(`sponsored from $${args.sponsorMinimumUsd}`);
+  }
+  if (args.bridgeMs !== undefined) {
+    lines.push(`bridge         ${formatDuration(args.bridgeMs)}`);
+  }
+  if (args.competitor !== undefined) {
+    lines.push(args.competitor);
+  }
   if (args.indicative) {
     lines.push("Indicative quote. Import a key to trade.");
   }

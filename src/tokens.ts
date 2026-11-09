@@ -1,6 +1,11 @@
 import type { Api } from "./api";
 import { NATIVE_TOKEN_ADDRESS } from "./config";
-import type { Network } from "./networks";
+import {
+  HYPERCORE_CHAIN_ID,
+  HYPERCORE_PERPS_USDC,
+  HYPERCORE_SPOT_USDC,
+  type Network,
+} from "./networks";
 import type { TokenDetails, TokenInfo } from "./types";
 
 const ADDRESS = /^0x[a-fA-F0-9]{40}$/;
@@ -20,15 +25,55 @@ export const nativeToken = (network: Network): TokenInfo => ({
   symbol: network.nativeSymbol,
 });
 
+const HYPERCORE_TOKENS: TokenInfo[] = [
+  {
+    address: HYPERCORE_PERPS_USDC,
+    decimals: 6,
+    name: "USD Coin",
+    order: 0,
+    symbol: "USDC",
+  },
+  {
+    address: HYPERCORE_SPOT_USDC,
+    decimals: 8,
+    name: "USD Coin",
+    order: 0,
+    symbol: "SPOT",
+  },
+];
+
 export const tokenFromDetails = (details: TokenDetails): TokenInfo => ({
   address: details.address,
   decimals: details.decimals,
-  isStock: details.isStock,
   logoURI: details.logoURI,
   name: details.name,
   order: details.order,
+  stock: details.stock,
   symbol: details.symbol,
 });
+
+const hypercoreToken = (input: string): TokenInfo => {
+  const key = input.toLowerCase();
+  if (key === "usdc-spot" || key === "spot-usdc") {
+    const spot = HYPERCORE_TOKENS[1];
+    if (!spot) throw new Error("Unknown token.");
+    return spot;
+  }
+  if (isAddress(input)) {
+    const found = tokenByAddress(input, HYPERCORE_TOKENS);
+    if (!found) throw new Error(`Unknown token ${input}.`);
+    return found;
+  }
+  return resolveSymbol(key === "perps" ? "usdc" : input, HYPERCORE_TOKENS);
+};
+
+export const listNetworkTokens = (
+  api: Pick<Api, "tokens">,
+  network: Network,
+) =>
+  network.id === HYPERCORE_CHAIN_ID
+    ? Promise.resolve(HYPERCORE_TOKENS)
+    : api.tokens.list.query({ chainId: network.id });
 
 export const isAddress = (value: string): value is `0x${string}` =>
   ADDRESS.test(value);
@@ -67,6 +112,7 @@ export const loadToken = async (
   input: string,
   listed?: TokenInfo[],
 ) => {
+  if (network.id === HYPERCORE_CHAIN_ID) return hypercoreToken(input);
   if (isNativeSymbol(input, network) || same(input, NATIVE_TOKEN_ADDRESS)) {
     return nativeToken(network);
   }

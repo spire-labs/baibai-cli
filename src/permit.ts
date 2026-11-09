@@ -1,11 +1,16 @@
-import { keccak256 } from "viem";
+import { keccak256, parseUnits } from "viem";
 import { BASE_CHAIN_ID, NATIVE_TOKEN_ADDRESS } from "./config";
 import { requireNetwork } from "./networks";
-import type { Quote, RelayerQuote, UserQuote } from "./types";
+import type { MessageQuote, Quote, RelayerQuote, UserQuote } from "./types";
 
 export const LIFI_DIAMOND_ADDRESS =
   "0x1231DEB6f5749EF6cE6943a275A1D3E7486F4EaE";
 const MAX_QUOTE_LIFETIME_MS = 2 * 60 * 1000;
+const MAX_WITHDRAWAL_QUOTE_LIFETIME_MS = (180 + 60) * 1000;
+const HYPERLIQUID_WITHDRAWAL_ACTIONS = new Set([
+  "HyperliquidTransaction:SendAsset",
+  "HyperliquidTransaction:Withdraw",
+]);
 const ERC6492_MAGIC_SUFFIX = "6492".repeat(16);
 
 export const SETTLEMENT_CHANGED_MESSAGE =
@@ -68,6 +73,7 @@ export type QuotePermitExpectation = {
   owner: string;
   quote: Quote;
   recipient: string;
+  sellTokenDecimals?: number;
   slippageBps: number;
   sourceChainId?: number;
   tokenIn: string;
@@ -75,6 +81,9 @@ export type QuotePermitExpectation = {
 };
 
 export const approvalSpender = (quote: Quote): `0x${string}` => {
+  if (quote.settlement === "message") {
+    throw new Error("A withdrawal is signed, not approved.");
+  }
   const network = requireNetwork(quote.chainIdIn);
   if (quote.settlement !== "user") return network.permit2;
   if ("kyber" in quote.venue) {
@@ -96,11 +105,16 @@ export const assertQuotePermit = ({
   owner,
   quote,
   recipient,
+  sellTokenDecimals,
   slippageBps,
   sourceChainId = BASE_CHAIN_ID,
   tokenIn,
   tokenOut,
 }: QuotePermitExpectation): void => {
+  const maxLifetimeMs =
+    quote.settlement === "message"
+      ? MAX_WITHDRAWAL_QUOTE_LIFETIME_MS
+      : MAX_QUOTE_LIFETIME_MS;
   if (
     !sameHex(quote.owner, owner) ||
     !sameHex(quote.recipient, recipient) ||
@@ -110,7 +124,7 @@ export const assertQuotePermit = ({
     quote.chainIdIn !== sourceChainId ||
     quote.chainIdOut !== destinationChainId ||
     quote.expiresAtMs <= nowMs ||
-    quote.expiresAtMs > nowMs + MAX_QUOTE_LIFETIME_MS
+    quote.expiresAtMs > nowMs + maxLifetimeMs
   ) {
     throw new Error("The refreshed quote no longer matches this trade.");
   }
@@ -149,6 +163,18 @@ export const assertQuotePermit = ({
     quote.settlement !== expectedSettlement
   ) {
     throw new Error(SETTLEMENT_CHANGED_MESSAGE);
+  }
+
+  if (quote.settlement === "message") {
+    if (sellTokenDecimals === undefined) {
+      throw new Error("Sell decimals are required to check a withdrawal.");
+    }
+    assertWithdrawalMessages(quote, {
+      amountIn: maxAmountIn,
+      owner,
+      sellTokenDecimals,
+    });
+    return;
   }
 
   if (quote.settlement === "user") {
@@ -233,6 +259,50 @@ const assertRelayerPermit = (
   if (!sharedValid || !venueValid) {
     throw new Error("The backend returned an invalid Permit2 quote.");
   }
+};
+
+const assertWithdrawalMessages = (
+  quote: MessageQuote,
+  args: { amountIn: bigint; owner: string; sellTokenDecimals: number },
+) => {
+  const invalid = () =>
+    new Error("The backend returned an invalid withdrawal to sign.");
+  let actions = 0;
+  for (const typedData of quote.typedData) {
+    const domain = asRecord(typedData.domain);
+    const message = asRecord(typedData.message);
+    if (HYPERLIQUID_WITHDRAWAL_ACTIONS.has(typedData.primaryType)) {
+      actions += 1;
+      const amount = message?.amount;
+      if (
+        domain?.name !== "HyperliquidSignTransaction" ||
+        message?.hyperliquidChain !== "Mainnet" ||
+        typeof amount !== "string" ||
+        !/^\d+(\.\d+)?$/.test(amount) ||
+        parseUnits(amount, args.sellTokenDecimals) !== args.amountIn
+      ) {
+        throw invalid();
+      }
+      const moves =
+        typedData.primaryType === "HyperliquidTransaction:Withdraw"
+          ? sameHex(message?.destination, args.owner)
+          : typeof message?.token === "string" &&
+            message.token.startsWith("USDC:") &&
+            message?.fromSubAccount === "" &&
+            (message?.sourceDex === "" || message?.sourceDex === "spot");
+      if (!moves) throw invalid();
+      continue;
+    }
+    if (
+      typedData.primaryType !== "NonceMapping" ||
+      domain?.name !== "RelayNonceMapping" ||
+      !sameHex(message?.wallet, args.owner) ||
+      !sameHex(message?.depositor, args.owner)
+    ) {
+      throw invalid();
+    }
+  }
+  if (actions !== 1) throw invalid();
 };
 
 const assertUserSwapTransaction = (

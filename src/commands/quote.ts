@@ -7,7 +7,7 @@ import { openSigner } from "../signers/open";
 import { parseHumanAmount } from "../swap/amounts";
 import { describeTrade } from "../swap/trade";
 import { isAddress } from "../tokens";
-import type { Quote, QuoteRequest, TokenInfo } from "../types";
+import type { CompetitorQuote, Quote, QuoteRequest, TokenInfo } from "../types";
 
 export const QUOTE_USAGE =
   "Usage: baibai quote <amount> <tokenIn> <tokenOut> [--from <network>] [--to <network>]";
@@ -20,8 +20,20 @@ export const quoteIntent = (
     ? { amountOut: amount.toString(), type: "exactOut" }
     : { amountIn: amount.toString(), type: "exactIn" };
 
+const competitorLine = (quote: CompetitorQuote, decimals: number) => {
+  let amount = quote.amountOut;
+  try {
+    amount = formatRawAmount(quote.amountOut, decimals);
+  } catch {
+    amount = quote.amountOut;
+  }
+  const gas = quote.gasFeeUsd === undefined ? "" : `  gas $${quote.gasFeeUsd}`;
+  return `${quote.source.padEnd(14)} ${amount}${gas}`;
+};
+
 export const presentQuote = (args: {
   buy: TokenInfo;
+  competitor?: CompetitorQuote;
   destinationName: string;
   indicative: boolean;
   nowMs: number;
@@ -52,12 +64,29 @@ export const presentQuote = (args: {
     },
     settlement: args.quote.settlement,
     slippageBps: args.quote.slippageBps,
+    ...(args.quote.estimatedDurationMs === undefined
+      ? {}
+      : { estimatedDurationMs: args.quote.estimatedDurationMs }),
+    ...(args.quote.settlement === "user" && args.quote.gasFeeUsd !== undefined
+      ? { gasFeeUsd: args.quote.gasFeeUsd }
+      : {}),
+    ...(args.quote.settlement === "user" &&
+    args.quote.sponsorMinimumUsd !== undefined
+      ? { sponsorMinimumUsd: args.quote.sponsorMinimumUsd }
+      : {}),
+    ...(args.competitor ? { competitor: args.competitor } : {}),
   };
   const text = formatQuoteText({
+    bridgeMs: args.quote.estimatedDurationMs,
     buyAmount: body.buy.amount,
     buyChain: args.destinationName,
     buySymbol: args.buy.symbol,
+    competitor: args.competitor
+      ? competitorLine(args.competitor, args.buy.decimals)
+      : undefined,
     expiresAtMs: args.quote.expiresAtMs,
+    gasFeeUsd:
+      args.quote.settlement === "user" ? args.quote.gasFeeUsd : undefined,
     indicative: args.indicative,
     minAmount: body.minAmountOut,
     nowMs: args.nowMs,
@@ -67,6 +96,10 @@ export const presentQuote = (args: {
     sellSymbol: args.sell.symbol,
     settlement: args.quote.settlement,
     slippageBps: args.quote.slippageBps,
+    sponsorMinimumUsd:
+      args.quote.settlement === "user"
+        ? args.quote.sponsorMinimumUsd
+        : undefined,
   });
   return { body, text };
 };
@@ -172,11 +205,23 @@ export const quoteCommand = async (argv: string[]) => {
       sell: described.quotedSell,
       trade,
     });
+    const owner = signer?.address ?? INDICATIVE_OWNER;
+    const competitors = await api.quote.competitors
+      .query({
+        amountIn: priced.quote.maxAmountIn,
+        destinationChainId: trade.destination.id,
+        owner,
+        sourceChainId: trade.source.id,
+        tokenIn: asAddress(described.quotedSell.address),
+        tokenOut: asAddress(described.quotedBuy.address),
+      })
+      .catch(() => undefined);
     const presented = presentQuote({
       buy:
         described.plan === "swap-then-unwrap"
           ? described.buy
           : described.quotedBuy,
+      competitor: competitors?.secondBestQuote,
       destinationName: trade.destination.name,
       indicative: signer?.address === undefined,
       nowMs: Date.now(),

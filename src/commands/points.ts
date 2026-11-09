@@ -4,16 +4,19 @@ import { defaultHome } from "../config";
 import { writeOut } from "../format";
 import {
   bindReferralTypedData,
+  commitGoalTypedData,
   createReferralUsernameTypedData,
   pointsSignatureDeadlineMs,
   updateReferralUsernameTypedData,
 } from "../points-signing";
 import { requireSigner } from "../signers/open";
-import type { PointsSummary } from "../types";
+import type { PointsScan, PointsSummary } from "../types";
 
 const USAGE = `Usage:
   baibai points
   baibai points leaderboard
+  baibai points scan
+  baibai points commit <usd>
   baibai points referral
   baibai points referral bind <username>
   baibai points referral rename <username>
@@ -31,6 +34,8 @@ export const pointsCommand = async (argv: string[]) => {
     return summaryCommand(action?.startsWith("-") ? [action, ...rest] : rest);
   }
   if (action === "leaderboard") return leaderboardCommand(rest);
+  if (action === "scan") return scanCommand(rest);
+  if (action === "commit") return commitCommand(rest);
   if (action === "referral") return referralCommand(rest);
   throw new Error(`Unknown points command ${action}\n${USAGE}`);
 };
@@ -69,6 +74,52 @@ const leaderboardCommand = async (argv: string[]) => {
           )
           .join("\n")}\n`;
   writeOut(parsed.json, board, text);
+};
+
+const scanCommand = async (argv: string[]) => {
+  const parsed = parsePointsArgs(argv, "Usage: baibai points scan");
+  if (!parsed) return;
+  if (parsed.positionals.length > 0) {
+    throw new Error("Usage: baibai points scan");
+  }
+  const signer = await requireSigner(defaultHome());
+  try {
+    const scan = await createApi(parsed.apiUrl).points.scan.mutate({
+      owner: signer.address,
+    });
+    writeOut(parsed.json, scan, formatScan(scan));
+  } finally {
+    await signer.close?.();
+  }
+};
+
+const commitCommand = async (argv: string[]) => {
+  const parsed = parsePointsArgs(argv, "Usage: baibai points commit <usd>");
+  if (!parsed) return;
+  const goal = parsed.positionals[0];
+  if (!goal || !/^[1-9]\d*$/.test(goal)) {
+    throw new Error("Goal must be a positive number of dollars.");
+  }
+  const signer = await requireSigner(defaultHome());
+  try {
+    const api = createApi(parsed.apiUrl);
+    const deadlineMs = pointsSignatureDeadlineMs();
+    const owner = signer.address;
+    const goalUsd = Number(goal);
+    const signature = await signer.signTypedData(
+      commitGoalTypedData({ deadlineMs, goalUsd, owner }),
+    );
+    await api.points.commitGoal.mutate({
+      deadlineMs,
+      goalUsd,
+      owner,
+      signature,
+    });
+    const summary = await api.points.summary.query({ owner });
+    writeOut(parsed.json, summary, formatSummary(summary));
+  } finally {
+    await signer.close?.();
+  }
 };
 
 const referralCommand = async (argv: string[]) => {
@@ -159,6 +210,18 @@ const parsePointsArgs = (argv: string[], usage: string) => {
     throw error;
   }
 };
+
+const formatScan = (scan: PointsScan) =>
+  [
+    `allowance $${scan.allowanceUsd}`,
+    `volume    $${scan.pastVolumeUsd}`,
+    `screen    ${scan.screen}`,
+    scan.committedGoalUsd ? `committed $${scan.committedGoalUsd}` : undefined,
+    `season    ${new Date(scan.seasonEndsAtMs).toISOString()}`,
+    "",
+  ]
+    .filter((line): line is string => line !== undefined)
+    .join("\n");
 
 const formatSummary = (summary: PointsSummary) => {
   const username = summary.referral.username?.username;

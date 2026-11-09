@@ -55,25 +55,14 @@ export const swapCommand = async (argv: string[]) => {
     );
 
     if (described.plan === "wrap" || described.plan === "unwrap") {
+      const rpcUrl = requireTradeRpc(trade);
       await requireBalance(trade, described.sell, signer.address, amount);
       if (!(await accept(trade.yes))) return;
       const wrapped = wrappedAddress(trade, described.plan);
       if (described.plan === "wrap") {
-        await depositNative(
-          signer,
-          wrapped,
-          amount,
-          trade.source.id,
-          trade.rpcUrl,
-        );
+        await depositNative(signer, wrapped, amount, trade.source.id, rpcUrl);
       } else {
-        await withdrawNative(
-          signer,
-          wrapped,
-          amount,
-          trade.source.id,
-          trade.rpcUrl,
-        );
+        await withdrawNative(signer, wrapped, amount, trade.source.id, rpcUrl);
       }
       writeOut(
         trade.json,
@@ -131,6 +120,11 @@ export const swapCommand = async (argv: string[]) => {
       if (displayed.settlement === "user") {
         process.stderr.write("You pay gas for this swap.\n");
       }
+      if (displayed.settlement === "message") {
+        process.stderr.write(
+          "This withdrawal is signed messages. You pay no gas.\n",
+        );
+      }
     }
     if (!(await accept(trade.yes))) return;
 
@@ -149,31 +143,38 @@ export const swapCommand = async (argv: string[]) => {
         wrappedAddress(trade, "wrap"),
         inputAmount,
         trade.source.id,
-        trade.rpcUrl,
+        requireTradeRpc(trade),
       );
     }
 
-    const spender = approvalSpender(displayed);
+    const message = displayed.settlement === "message";
+    const rpcUrl = message ? trade.rpcUrl : requireTradeRpc(trade);
+    const spender = message ? undefined : approvalSpender(displayed);
     const startedAt = Date.now();
     const settled = await executeSwap({
-      allowance: () =>
-        readAllowance(
+      allowance: () => {
+        if (!spender || rpcUrl === undefined) return Promise.resolve(0n);
+        return readAllowance(
           asAddress(quotedSell.address),
           signer.address,
           spender,
           trade.source.id,
-          trade.rpcUrl,
-        ),
-      approve: () =>
-        approveSpender(
+          rpcUrl,
+        );
+      },
+      approve: () => {
+        if (!spender || rpcUrl === undefined) return Promise.resolve();
+        return approveSpender(
           signer,
           asAddress(quotedSell.address),
           spender,
           trade.source.id,
-          trade.rpcUrl,
-        ),
+          rpcUrl,
+        );
+      },
       authorizedAmountIn: inputAmount,
       createOrder: (input) => api.order.create.mutate(input),
+      createSignedOrder: (input) => api.order.createSigned.mutate(input),
       destinationChainId: trade.destination.id,
       expectedSettlement: displayed.settlement,
       intent: trade.exactOut ? "exactOut" : "exactIn",
@@ -184,11 +185,17 @@ export const swapCommand = async (argv: string[]) => {
       owner: signer.address,
       quoteOnce: (input) => api.quote.once.query(input),
       recipient,
+      recordUserPaid: (input) => api.order.recordUserPaid.mutate(input),
       requiredAllowance: inputAmount,
-      sendUserSwap: (quote) =>
-        sendUserSwap(signer, quote, trade.source.id, trade.rpcUrl),
+      sellTokenDecimals: quotedSell.decimals,
+      sendUserSwap: (quote) => {
+        if (rpcUrl === undefined) {
+          throw new Error(`${trade.source.name} has no RPC.`);
+        }
+        return sendUserSwap(signer, quote, trade.source.id, rpcUrl);
+      },
       signer,
-      skipPreflight: trade.fast,
+      skipPreflight: trade.fast || message,
       slippageBps: trade.slippageBps,
       sourceChainId: trade.source.id,
       tokenIn: asAddress(quotedSell.address),
@@ -201,7 +208,7 @@ export const swapCommand = async (argv: string[]) => {
         wrappedAddress(trade, "unwrap"),
         BigInt(settled.amountOut),
         trade.source.id,
-        trade.rpcUrl,
+        requireTradeRpc(trade),
       );
     }
 
@@ -240,6 +247,13 @@ export const swapCommand = async (argv: string[]) => {
   }
 };
 
+const requireTradeRpc = (trade: TradeArgs) => {
+  if (trade.rpcUrl === undefined) {
+    throw new Error(`${trade.source.name} has no RPC.`);
+  }
+  return trade.rpcUrl;
+};
+
 const accept = async (yes: boolean) => yes || promptConfirm();
 
 const wrappedAddress = (trade: TradeArgs, plan: "wrap" | "unwrap") => {
@@ -255,7 +269,7 @@ const requireBalance = async (
   owner: `0x${string}`,
   amount: bigint,
 ) => {
-  if (trade.fast) return;
+  if (trade.fast || trade.rpcUrl === undefined) return;
   const balance = await readBalance(
     asAddress(token.address),
     owner,

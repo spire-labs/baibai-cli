@@ -1,7 +1,7 @@
 import { ORDER_POLL_INTERVAL_MS, ORDER_POLL_TIMEOUT_MS } from "../config";
 import { assertQuotePermit } from "../permit";
 import type { Signer } from "../signer";
-import type { Order, Quote, QuoteRequest, UserQuote } from "../types";
+import type { Address, Order, Quote, QuoteRequest, UserQuote } from "../types";
 
 export type SettledSwap = {
   amountIn?: string;
@@ -12,13 +12,20 @@ export type SettledSwap = {
   txHash?: string;
 };
 
+const inFlight = (status: Order["status"]) =>
+  status === "pending" || status === "bridging";
+
 export const executeSwap = async (args: {
   allowance: () => Promise<bigint>;
   approve: () => Promise<void>;
   authorizedAmountIn: bigint;
   createOrder: (input: {
-    permit2Signature: `0x${string}`;
+    permit2Signature: Address;
     quote: Quote;
+  }) => Promise<Order>;
+  createSignedOrder?: (input: {
+    quote: Quote;
+    signatures: Address[];
   }) => Promise<Order>;
   destinationChainId: number;
   expectedSettlement: Quote["settlement"];
@@ -27,13 +34,15 @@ export const executeSwap = async (args: {
   minimumAmountOut: bigint;
   now?: () => number;
   orderStatus: (orderId: string) => Promise<Order>;
-  owner: `0x${string}`;
+  owner: Address;
   quoteOnce: (input: QuoteRequest) => Promise<Quote>;
-  recipient: `0x${string}`;
+  recipient: Address;
+  recordUserPaid?: (input: { quote: Quote; txHash: Address }) => Promise<Order>;
   requiredAllowance: bigint;
+  sellTokenDecimals?: number;
   sendUserSwap: (quote: UserQuote) => Promise<{
     amountOut: string;
-    txHash: `0x${string}`;
+    txHash: Address;
   }>;
   signer: Signer;
   skipPreflight?: boolean;
@@ -41,11 +50,13 @@ export const executeSwap = async (args: {
   slippageBps: number;
   sourceChainId: number;
   timeoutMs?: number;
-  tokenIn: `0x${string}`;
-  tokenOut: `0x${string}`;
+  tokenIn: Address;
+  tokenOut: Address;
+  warn?: (message: string) => void;
 }): Promise<SettledSwap> => {
   if (
     !args.skipPreflight &&
+    args.expectedSettlement !== "message" &&
     (await args.allowance()) < args.requiredAllowance
   ) {
     await args.approve();
@@ -74,6 +85,7 @@ export const executeSwap = async (args: {
     owner: args.owner,
     quote: fresh,
     recipient: args.recipient,
+    sellTokenDecimals: args.sellTokenDecimals,
     slippageBps: args.slippageBps,
     sourceChainId: args.sourceChainId,
     tokenIn: args.tokenIn,
@@ -82,28 +94,93 @@ export const executeSwap = async (args: {
 
   if (fresh.settlement === "user") {
     const sent = await args.sendUserSwap(fresh);
+    let orderId: string | undefined;
+    if (args.recordUserPaid) {
+      try {
+        const recorded = await args.recordUserPaid({
+          quote: fresh,
+          txHash: sent.txHash,
+        });
+        orderId = recorded.orderId;
+      } catch (error) {
+        const detail = error instanceof Error ? error.message : String(error);
+        (args.warn ?? ((message) => process.stderr.write(`${message}\n`)))(
+          `Swap sent, but it was not recorded: ${detail}`,
+        );
+      }
+    }
     return {
       amountIn: fresh.maxAmountIn,
       amountOut: sent.amountOut,
+      orderId,
       settlement: "user",
       status: "filled",
       txHash: sent.txHash,
     };
   }
 
-  const permit2Signature = await args.signer.signTypedData(
-    fresh.permit2TypedData,
-  );
-  let order = await args.createOrder({
-    permit2Signature,
-    quote: fresh,
-  });
+  const order =
+    fresh.settlement === "message"
+      ? await submitSignedOrder(args, fresh)
+      : await args.createOrder({
+          permit2Signature: await args.signer.signTypedData(
+            fresh.permit2TypedData,
+          ),
+          quote: fresh,
+        });
+  const filled = await waitForFill(args, order, fresh.estimatedDurationMs);
+  return {
+    amountIn: filled.amountInSpent,
+    amountOut: filled.amountOutDelivered ?? "",
+    orderId: filled.orderId,
+    settlement: fresh.settlement,
+    status: "filled",
+    txHash: filled.txHash,
+  };
+};
+
+const submitSignedOrder = async (
+  args: {
+    createSignedOrder?: (input: {
+      quote: Quote;
+      signatures: Address[];
+    }) => Promise<Order>;
+    signer: Signer;
+  },
+  quote: Extract<Quote, { settlement: "message" }>,
+) => {
+  if (!args.createSignedOrder) {
+    throw new Error("A withdrawal quote cannot be submitted.");
+  }
+  const signatures: Address[] = [];
+  for (const typedData of quote.typedData) {
+    signatures.push(await args.signer.signTypedData(typedData));
+  }
+  return args.createSignedOrder({ quote, signatures });
+};
+
+const waitForFill = async (
+  args: {
+    intervalMs?: number;
+    now?: () => number;
+    orderStatus: (orderId: string) => Promise<Order>;
+    sleep?: (ms: number) => Promise<void>;
+    timeoutMs?: number;
+  },
+  initial: Order,
+  estimatedDurationMs: number | undefined,
+) => {
   const now = args.now ?? Date.now;
   const sleep =
     args.sleep ??
     ((ms: number) => new Promise((resolve) => setTimeout(resolve, ms)));
-  const deadline = now() + (args.timeoutMs ?? ORDER_POLL_TIMEOUT_MS);
-  while (order.status === "pending") {
+  const timeoutMs = Math.max(
+    args.timeoutMs ?? ORDER_POLL_TIMEOUT_MS,
+    estimatedDurationMs ?? 0,
+  );
+  const deadline = now() + timeoutMs;
+  let order = initial;
+  while (inFlight(order.status)) {
     if (now() >= deadline) {
       throw new Error("Timed out waiting for the order to settle.");
     }
@@ -119,12 +196,5 @@ export const executeSwap = async (args: {
   if (!order.amountOutDelivered) {
     throw new Error("The fill did not report an output amount.");
   }
-  return {
-    amountIn: order.amountInSpent,
-    amountOut: order.amountOutDelivered,
-    orderId: order.orderId,
-    settlement: "relayer",
-    status: "filled",
-    txHash: order.txHash,
-  };
+  return order;
 };

@@ -1,4 +1,5 @@
 import { BASE_CHAIN_ID, resolveRpcUrl } from "../config";
+import { requireNetwork } from "../networks";
 import {
   normalizePrivateKey,
   readConfig,
@@ -8,21 +9,32 @@ import {
 import type { Signer } from "../signer";
 import { localKeySigner } from "./local-key";
 
+const signerRpc = (chainId: number, rpcUrl: string | undefined) => {
+  if (rpcUrl !== undefined) return rpcUrl;
+  if (requireNetwork(chainId).rpcUrl === undefined) return undefined;
+  return resolveRpcUrl(undefined, chainId);
+};
+
 export const openSigner = async (
   home: string,
   chainId: number = BASE_CHAIN_ID,
-  rpcUrl: string = resolveRpcUrl(undefined, chainId),
+  rpcUrl?: string,
 ): Promise<Signer | undefined> => {
+  const resolvedRpc = signerRpc(chainId, rpcUrl);
   const envKey = process.env.PRIVATE_KEY;
   const source = selectSignerSource({
     configured: readConfig(home).signer,
     envKey,
   });
   if (source === "env") {
-    return localKeySigner(normalizePrivateKey(envKey ?? ""), chainId, rpcUrl);
+    return localKeySigner(
+      normalizePrivateKey(envKey ?? ""),
+      chainId,
+      resolvedRpc,
+    );
   }
   if (source === "key") {
-    return localKeySigner(readKeyFile(home), chainId, rpcUrl);
+    return localKeySigner(readKeyFile(home), chainId, resolvedRpc);
   }
   return undefined;
 };
@@ -30,7 +42,7 @@ export const openSigner = async (
 export const requireSigner = async (
   home: string,
   chainId: number = BASE_CHAIN_ID,
-  rpcUrl: string = resolveRpcUrl(undefined, chainId),
+  rpcUrl?: string,
 ) => {
   const signer = await openSigner(home, chainId, rpcUrl);
   if (!signer) {

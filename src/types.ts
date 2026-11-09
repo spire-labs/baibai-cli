@@ -1,12 +1,24 @@
 export type Address = `0x${string}`;
 
+export type TokenStock = {
+  issuer?: { id: string; name: string };
+  underlying: {
+    id: string;
+    isin?: string;
+    kind: "stock" | "etf";
+    logoURI?: string;
+    name: string;
+    symbol?: string;
+  };
+};
+
 export type TokenInfo = {
   address: string;
   decimals: number;
-  isStock?: boolean;
   logoURI?: string;
   name: string;
   order?: number;
+  stock?: TokenStock;
   symbol: string;
 };
 
@@ -44,6 +56,7 @@ type QuoteShared = {
   attestation: string;
   chainIdIn: number;
   chainIdOut: number;
+  estimatedDurationMs?: number;
   expectedAmountIn: string;
   expectedAmountOut: string;
   expectedOutUsd?: number;
@@ -61,15 +74,19 @@ type QuoteShared = {
 };
 
 export type LifiVenue = {
-  lifi: { calldata: string; step: unknown };
+  lifi: { calldata: string; step?: unknown };
 };
 
 export type KyberRelayerVenue = {
-  kyber: { routeSummary: unknown };
+  kyber: { calldata?: string; routeSummary?: unknown };
 };
 
 export type KyberUserVenue = {
-  kyber: { calldata: string; routeSummary: unknown };
+  kyber: { calldata: string; routeSummary?: unknown };
+};
+
+export type MessageVenue = {
+  lifi: { step?: unknown };
 };
 
 export type SwapTransaction = {
@@ -86,29 +103,73 @@ export type RelayerQuote = QuoteShared & {
 };
 
 export type UserQuote = QuoteShared & {
+  gasFeeUsd?: string;
   settlement: "user";
+  sponsorMinimumUsd?: number;
   transactionRequest: SwapTransaction;
   venue: LifiVenue | KyberUserVenue;
 };
 
-export type Quote = RelayerQuote | UserQuote;
+export type MessageQuote = QuoteShared & {
+  settlement: "message";
+  typedData: PermitTypedData[];
+  venue: MessageVenue;
+};
+
+export type Quote = RelayerQuote | UserQuote | MessageQuote;
+
+export type CompetitorSource = "uniswap" | "aerodrome";
+
+export type CompetitorQuote = {
+  amountOut: string;
+  gasFeeUsd?: string;
+  source: CompetitorSource;
+};
+
+export type QuoteCompetitors = {
+  secondBestQuote?: CompetitorQuote;
+};
+
+export type OrderFailureCode =
+  | "QUOTE_EXPIRED"
+  | "INVALID_SIGNATURE"
+  | "PERMIT2_INVALID"
+  | "INSUFFICIENT_BALANCE"
+  | "FILL_FAILED"
+  | "BRIDGE_FAILED"
+  | "INTERNAL_ERROR";
 
 export type Order = {
   amountInSpent?: string;
   amountOutDelivered?: string;
+  chainIdIn: number;
+  chainIdOut: number;
   confirmedAtMs?: number;
-  createdAtMs?: number;
-  error?: { code: string; message: string };
+  createdAtMs: number;
+  destination?: {
+    amountReceived?: string;
+    chainId: number;
+    substatus?: string;
+    tokenReceived?: string;
+    txHash?: string;
+  };
+  error?: { code: OrderFailureCode; message: string };
   expectedAmountOut: string;
-  gain?: { amountOutUsd: string; source: string };
+  gain?: { amountOutUsd: string; source: CompetitorSource };
   maxAmountIn: string;
   orderId: string;
   owner: string;
+  permit2Signature?: string;
   quoteId: string;
-  status: "pending" | "filled" | "failed" | "expired";
+  secondBestQuote?: CompetitorQuote;
+  settlement: Quote["settlement"];
+  settlementBlockNumber?: string;
+  status: "pending" | "bridging" | "filled" | "failed" | "expired" | "refunded";
+  submittedAtMs?: number;
   tokenIn?: string;
   tokenOut?: string;
   txHash?: string;
+  updatedAtMs: number;
 };
 
 export type OrderPage = {
@@ -122,19 +183,28 @@ export type GainStats = {
   totalGainUsd: string;
 };
 
+export type StockPurchases = {
+  totalUsd: number;
+};
+
 export type Portfolio = {
   balances: Array<{
     balance: string;
     balanceUsd?: string;
+    coinId?: string;
     decimals: number;
-    isNative?: boolean;
+    isNative: boolean;
+    logoURI?: string;
     name: string;
     priceUsd?: string;
+    stock?: TokenStock;
     symbol: string;
     token: string;
   }>;
   chainId: number;
   incomplete?: { checkedTokens: string[] };
+  invalidTokens?: string[];
+  observedBlockNumber: string;
   owner: string;
   totalUsd: string;
 };
@@ -212,4 +282,12 @@ export type PointsProgramConfig = {
   commitGoalTiersUsd: number[];
   refereeBoostRate: number;
   referrerShareRate: number;
+};
+
+export type PointsScan = {
+  allowanceUsd: string;
+  committedGoalUsd?: string;
+  pastVolumeUsd: string;
+  screen: "allowanceOnly" | "allowanceWithUpgrade" | "commitOnly";
+  seasonEndsAtMs: number;
 };

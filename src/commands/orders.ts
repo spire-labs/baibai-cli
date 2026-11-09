@@ -33,7 +33,7 @@ export const ordersCommand = async (argv: string[]) => {
         : `${items
             .map(
               (item) =>
-                `${item.orderId}  ${item.status}  ${item.amountIn ?? "?"} → ${item.amountOut ?? "?"}${item.gain ? `  gain $${item.gain}` : ""}`,
+                `${item.orderId}  ${item.status}  ${item.settlement}  ${item.amountIn ?? "?"} → ${item.amountOut ?? "?"}${item.gain ? `  gain $${item.gain}` : ""}`,
             )
             .join(
               "\n",
@@ -62,8 +62,12 @@ export const orderCommand = async (argv: string[]) => {
   const order = await createApi(parsed.apiUrl).order.status.query({ orderId });
   const summary = summarize(order);
   const lines = [
-    `${summary.orderId}  ${summary.status}`,
+    `${summary.orderId}  ${summary.status}  ${summary.settlement}`,
+    summary.chainIdIn !== summary.chainIdOut
+      ? `route   ${summary.chainIdIn} → ${summary.chainIdOut}`
+      : undefined,
     summary.txHash ? `tx      ${summary.txHash}` : undefined,
+    summary.destinationTx ? `dest    ${summary.destinationTx}` : undefined,
     summary.error,
   ].filter((line): line is string => line !== undefined);
   writeOut(parsed.json, summary, `${lines.join("\n")}\n`);
@@ -72,11 +76,15 @@ export const orderCommand = async (argv: string[]) => {
 const summarize = (order: Order) => ({
   amountIn: order.amountInSpent ?? order.maxAmountIn,
   amountOut: order.amountOutDelivered ?? order.expectedAmountOut,
+  chainIdIn: order.chainIdIn,
+  chainIdOut: order.chainIdOut,
+  destinationTx: order.destination?.txHash,
   error: order.error
     ? `${order.error.code}: ${order.error.message}`
     : undefined,
   gain: order.gain?.amountOutUsd,
   orderId: order.orderId,
+  settlement: order.settlement,
   status: order.status,
   tokenIn: order.tokenIn,
   tokenOut: order.tokenOut,

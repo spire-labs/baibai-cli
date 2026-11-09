@@ -6,7 +6,13 @@ import {
 } from "../config";
 import { LIFI_DIAMOND_ADDRESS } from "../permit";
 import type { Signer } from "../signer";
-import type { Order, Quote, RelayerQuote, UserQuote } from "../types";
+import type {
+  MessageQuote,
+  Order,
+  Quote,
+  RelayerQuote,
+  UserQuote,
+} from "../types";
 import { executeSwap } from "./execute";
 
 const OWNER = "0x2222222222222222222222222222222222222222" as const;
@@ -83,13 +89,18 @@ const quote = (spender: string = PERMIT2_PROXY_ADDRESS): RelayerQuote => {
 };
 
 const order = (status: Order["status"], error?: Order["error"]): Order => ({
+  chainIdIn: BASE_CHAIN_ID,
+  chainIdOut: BASE_CHAIN_ID,
+  createdAtMs: 0,
   error,
   expectedAmountOut: RAW_OUT,
   maxAmountIn: RAW_IN,
   orderId: "order-1",
   owner: OWNER,
   quoteId: "quote-1",
+  settlement: "relayer",
   status,
+  updatedAtMs: 0,
   ...(status === "filled"
     ? {
         amountInSpent: RAW_IN,
@@ -119,13 +130,22 @@ const signer = (): Signer & { calls: string[] } => {
 const run = (args: {
   allowance: bigint;
   fresh?: Quote;
+  recordUserPaid?: (input: {
+    quote: Quote;
+    txHash: `0x${string}`;
+  }) => Promise<Order>;
+  sellTokenDecimals?: number;
   skipPreflight?: boolean;
   status?: Order;
+  statuses?: Order["status"][];
+  warn?: (message: string) => void;
 }) => {
   const wallet = signer();
   const approvals: string[] = [];
   let allowanceReads = 0;
+  let statusReads = 0;
   const created: Array<{ permit2Signature: string; quoteId: string }> = [];
+  const signed: Array<{ quoteId: string; signatures: string[] }> = [];
   const promise = executeSwap({
     allowance: async () => {
       allowanceReads += 1;
@@ -142,15 +162,31 @@ const run = (args: {
       });
       return args.status ?? order("pending");
     },
+    createSignedOrder: async (input) => {
+      signed.push({
+        quoteId: input.quote.quoteId,
+        signatures: input.signatures,
+      });
+      return args.status ?? order("pending");
+    },
     destinationChainId: BASE_CHAIN_ID,
     expectedSettlement: (args.fresh ?? quote()).settlement,
     intent: "exactIn",
     minimumAmountOut: BigInt(RAW_MIN),
-    orderStatus: async () => args.status ?? order("filled"),
+    orderStatus: async () => {
+      if (args.statuses) {
+        const status = args.statuses[statusReads] ?? "filled";
+        statusReads += 1;
+        return order(status);
+      }
+      return args.status ?? order("filled");
+    },
     owner: OWNER,
     quoteOnce: async () => args.fresh ?? quote(),
     recipient: OWNER,
+    recordUserPaid: args.recordUserPaid,
     requiredAllowance: BigInt(RAW_IN),
+    sellTokenDecimals: args.sellTokenDecimals,
     sendUserSwap: async () => {
       wallet.calls.push("send");
       return { amountOut: RAW_OUT, txHash: `0x${"cd".repeat(32)}` };
@@ -162,9 +198,9 @@ const run = (args: {
     sourceChainId: BASE_CHAIN_ID,
     tokenIn: WETH,
     tokenOut: USDC,
+    warn: args.warn,
   });
-  return { allowanceReads, approvals, created, promise, wallet };
-  return { allowanceReads, approvals, promise, wallet };
+  return { allowanceReads, approvals, created, promise, signed, wallet };
 };
 
 describe("executeSwap", () => {
@@ -243,6 +279,99 @@ describe("executeSwap", () => {
     expect(created).toEqual([]);
     expect(filled.settlement).toBe("user");
     expect(filled.txHash).toBe(`0x${"cd".repeat(32)}`);
+  });
+
+  test("waits through a bridging order", async () => {
+    const { promise } = run({
+      allowance: BigInt(RAW_IN),
+      statuses: ["bridging", "filled"],
+    });
+    const filled = await promise;
+    expect(filled.status).toBe("filled");
+    expect(filled.orderId).toBe("order-1");
+  });
+
+  test("records an owner-paid swap and keeps the fill when recording fails", async () => {
+    const {
+      permit2TypedData: _typed,
+      settlement: _settlement,
+      venue: _venue,
+      ...rest
+    } = quote();
+    const fresh: UserQuote = {
+      ...rest,
+      settlement: "user",
+      transactionRequest: {
+        chainId: BASE_CHAIN_ID,
+        data: CALLDATA,
+        to: LIFI_DIAMOND_ADDRESS,
+        value: "0",
+      },
+      venue: { lifi: { calldata: CALLDATA, step: {} } },
+    };
+    const warnings: string[] = [];
+    const { promise } = run({
+      allowance: BigInt(RAW_IN),
+      fresh,
+      recordUserPaid: async () => {
+        throw new Error("history unavailable");
+      },
+      warn: (message) => {
+        warnings.push(message);
+      },
+    });
+    const filled = await promise;
+    expect(filled.settlement).toBe("user");
+    expect(filled.txHash).toBe(`0x${"cd".repeat(32)}`);
+    expect(warnings).toEqual([
+      "Swap sent, but it was not recorded: history unavailable",
+    ]);
+  });
+
+  test("signs a withdrawal and submits the signatures", async () => {
+    const fresh: MessageQuote = {
+      attestation: "attest",
+      chainIdIn: BASE_CHAIN_ID,
+      chainIdOut: BASE_CHAIN_ID,
+      expectedAmountIn: RAW_IN,
+      expectedAmountOut: RAW_OUT,
+      expiresAtMs: Date.now() + 180_000,
+      maxAmountIn: RAW_IN,
+      minAmountOut: RAW_MIN,
+      owner: OWNER,
+      priceImpactBps: 0,
+      quoteId: "quote-1",
+      recipient: OWNER,
+      settlement: "message",
+      slippageBps: 100,
+      tokenIn: WETH,
+      tokenOut: USDC,
+      typedData: [
+        {
+          domain: { name: "HyperliquidSignTransaction" },
+          message: {
+            amount: "1",
+            destination: OWNER,
+            hyperliquidChain: "Mainnet",
+          },
+          primaryType: "HyperliquidTransaction:Withdraw",
+          types: {},
+        },
+      ],
+      venue: { lifi: {} },
+    };
+    const { allowanceReads, promise, signed, wallet } = run({
+      allowance: 0n,
+      fresh,
+      sellTokenDecimals: 18,
+    });
+    const filled = await promise;
+    expect(allowanceReads).toBe(0);
+    expect(wallet.calls).toEqual(["sign"]);
+    expect(signed).toEqual([
+      { quoteId: "quote-1", signatures: [`0x${"ab".repeat(65)}`] },
+    ]);
+    expect(filled.settlement).toBe("message");
   });
 
   test("does not sign a quote with a substituted spender", async () => {

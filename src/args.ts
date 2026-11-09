@@ -18,7 +18,7 @@ export type TradeArgs = {
   fast: boolean;
   json: boolean;
   recipient?: string;
-  rpcUrl: string;
+  rpcUrl?: string;
   slippageBps: number;
   source: Network;
   tokenIn: string;
@@ -73,6 +73,9 @@ export const parseTradeArgs = (argv: string[], usage: string): TradeArgs => {
     : fromNetwork;
   const sell = parseTokenArg(tokenIn, fromNetwork);
   const buy = parseTokenArg(tokenOut, toNetwork);
+  if (sell.chain.rpcUrl === undefined && parsed.values.rpc !== undefined) {
+    throw new Error(`${sell.chain.name} has no RPC.`);
+  }
   return {
     amount,
     apiUrl: resolveApiUrl(parsed.values.api),
@@ -81,7 +84,10 @@ export const parseTradeArgs = (argv: string[], usage: string): TradeArgs => {
     fast: parsed.values.fast ?? false,
     json: parsed.values.json ?? false,
     recipient,
-    rpcUrl: resolveRpcUrl(parsed.values.rpc, sell.chain.id),
+    rpcUrl:
+      sell.chain.rpcUrl === undefined
+        ? undefined
+        : resolveRpcUrl(parsed.values.rpc, sell.chain.id),
     slippageBps: parseSlippageBps(parsed.values.slippage),
     source: sell.chain,
     tokenIn: sell.token,
@@ -101,6 +107,54 @@ const parsePeriod = (value: string | undefined): "1d" | "1w" | "1m" | "1y" => {
     return period;
   }
   throw new Error("Period must be 1d, 1w, 1m, or 1y.");
+};
+
+const AMOUNT_CAP = /^(?:0|[1-9]\d*)(?:\.\d+)?$/;
+
+const parseAmountCap = (value: string | undefined) => {
+  if (value === undefined) return undefined;
+  if (!AMOUNT_CAP.test(value) || !/[1-9]/.test(value)) {
+    throw new Error("Amount must be greater than zero.");
+  }
+  return value;
+};
+
+export type AccumulateArgs = {
+  amount?: string;
+  apiUrl: string;
+  json: boolean;
+  network: Network;
+  rpcUrl: string;
+};
+
+export const parseAccumulateArgs = (
+  argv: string[],
+  usage: string,
+): AccumulateArgs => {
+  const parsed = parseArgs({
+    allowPositionals: true,
+    args: argv,
+    options: {
+      amount: { type: "string" },
+      api: { type: "string" },
+      from: { type: "string" },
+      help: { type: "boolean", short: "h", default: false },
+      json: { type: "boolean", default: false },
+      rpc: { type: "string" },
+    },
+  });
+  if (parsed.values.help) throw new HelpRequested();
+  if (parsed.positionals.length > 0) throw new Error(usage);
+  const network = parsed.values.from
+    ? resolveNetwork(parsed.values.from)
+    : defaultNetwork();
+  return {
+    amount: parseAmountCap(parsed.values.amount),
+    apiUrl: resolveApiUrl(parsed.values.api),
+    json: parsed.values.json ?? false,
+    network,
+    rpcUrl: resolveRpcUrl(parsed.values.rpc, network.id),
+  };
 };
 
 export const parseLimitArgs = (argv: string[]) => {

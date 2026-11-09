@@ -18,27 +18,30 @@ const typedDataForViem = (typedData: PermitTypedData) => {
 export const localKeySigner = (
   privateKey: `0x${string}`,
   chainId: number,
-  rpcUrl: string,
+  rpcUrl?: string,
 ): Signer => {
   const network = requireNetwork(chainId);
-  const chain = chainFor(network, rpcUrl);
+  const endpoint = rpcUrl ?? network.rpcUrl;
+  const chain = chainFor(network, endpoint ?? "http://127.0.0.1");
   const account = privateKeyToAccount(privateKey);
   const wallet = createWalletClient({
     account,
     chain,
-    transport: http(rpcUrl),
+    transport: http(endpoint ?? "http://127.0.0.1"),
   });
   return {
     address: account.address,
     kind: "key",
-    sendTransaction: (tx) =>
-      wallet.sendTransaction({
+    sendTransaction: (tx) => {
+      if (!endpoint) throw new Error(`${network.name} has no RPC.`);
+      return wallet.sendTransaction({
         account,
         chain,
         data: tx.data,
         to: tx.to,
         value: tx.value,
-      }),
+      });
+    },
     signTypedData: async (typedData) => {
       const signature = await wallet.signTypedData(
         typedDataForViem(typedData) as Parameters<

@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { lifiDiamondForChain, resolveNetwork } from "./networks";
 import {
+  commitGoalTypedData,
   createReferralUsernameTypedData,
   pointsSignatureDeadlineMs,
 } from "./points-signing";
@@ -14,6 +15,18 @@ describe("resolveNetwork", () => {
 
   test("rejects an unknown network", () => {
     expect(() => resolveNetwork("nope")).toThrow("Unknown network nope.");
+  });
+
+  test("matches the app's settlement networks", () => {
+    expect(resolveNetwork("robinhood").kyberSettler?.toLowerCase()).toBe(
+      "0x551f25e294f9dae56463a62dbcfd063ca8785b83",
+    );
+    expect(resolveNetwork("hypercore")).toMatchObject({
+      id: 1337,
+      rpcUrl: undefined,
+    });
+    expect(() => resolveNetwork("blast")).toThrow("Unknown network blast.");
+    expect(() => resolveNetwork("lens")).toThrow("Unknown network lens.");
   });
 });
 
@@ -38,5 +51,19 @@ describe("points typed data", () => {
     expect(typed.domain).toEqual({ name: "BaiBai Points", version: "1" });
     expect(typed.primaryType).toBe("CreateReferralUsername");
     expect(typed.message.deadline).toBe(BigInt(now + 10 * 60_000));
+  });
+
+  test("signs a points commit the API verifies", () => {
+    const typed = commitGoalTypedData({
+      deadlineMs: 5_000,
+      goalUsd: 1000,
+      owner: "0x2222222222222222222222222222222222222222",
+    });
+    expect(typed.primaryType).toBe("CommitGoal");
+    expect(typed.message).toEqual({
+      deadline: 5_000n,
+      goalUsd: 1_000n,
+      owner: "0x2222222222222222222222222222222222222222",
+    });
   });
 });
